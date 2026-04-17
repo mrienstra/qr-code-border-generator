@@ -114,6 +114,43 @@ def offset_to_svg(
     return {(x_offset + c, y_offset + r) for c, r in squares}
 
 
+def trim_corners_diagonal(
+    squares: set[tuple[float, float]], layout: dict, trim_dx_ge_dy: bool
+) -> set[tuple[float, float]]:
+    """Trim pixels along 45-degree diagonals in corner regions.
+
+    In each corner (where a pixel is outside the QR area on two axes),
+    a diagonal line divides the space between the two adjacent groups.
+    Pixels on the diagonal are "no man's land" (removed from both groups).
+
+    trim_dx_ge_dy=True  (top/bottom): remove where horiz dist >= vert dist
+    trim_dx_ge_dy=False (left/right):  remove where vert dist >= horiz dist
+    """
+    qo = layout["qr_origin"]
+    qe = qo + layout["qr_size"]
+
+    result = set()
+    for x, y in squares:
+        dx = dy = None
+        if x < qo and y < qo:          # top-left corner
+            dx, dy = qo - x, qo - y
+        elif x >= qe and y < qo:        # top-right corner
+            dx, dy = x - qe + 1, qo - y
+        elif x < qo and y >= qe:        # bottom-left corner
+            dx, dy = qo - x, y - qe + 1
+        elif x >= qe and y >= qe:       # bottom-right corner
+            dx, dy = x - qe + 1, y - qe + 1
+
+        if dx is not None:
+            if trim_dx_ge_dy and dx >= dy:
+                continue
+            if not trim_dx_ge_dy and dy >= dx:
+                continue
+
+        result.add((x, y))
+    return result
+
+
 def make_flanking_h(
     center: set[tuple[int, int]],
     qr_size: int,
@@ -173,7 +210,7 @@ def make_top_group(qr, layout, reps=2):
     result = [("top center", offset_to_svg(center, qr_origin, y_offset))]
     for side, squares in flanks:
         result.append((f"top {side}", offset_to_svg(squares, qr_origin, y_offset)))
-    return result
+    return [(l, trim_corners_diagonal(s, layout, trim_dx_ge_dy=True)) for l, s in result]
 
 
 def make_bottom_group(qr, layout):
@@ -187,7 +224,7 @@ def make_bottom_group(qr, layout):
     result = [("bottom center", offset_to_svg(center, qr_origin, y_offset))]
     for side, squares in flanks:
         result.append((f"bottom {side}", offset_to_svg(squares, qr_origin, y_offset)))
-    return result
+    return [(l, trim_corners_diagonal(s, layout, trim_dx_ge_dy=True)) for l, s in result]
 
 
 def make_left_group(qr, layout, reps=2):
@@ -201,7 +238,7 @@ def make_left_group(qr, layout, reps=2):
     result = [("left center", offset_to_svg(center, x_offset, qr_origin))]
     for side, squares in flanks:
         result.append((f"left {side}", offset_to_svg(squares, x_offset, qr_origin)))
-    return result
+    return [(l, trim_corners_diagonal(s, layout, trim_dx_ge_dy=False)) for l, s in result]
 
 
 def make_right_group(qr, layout):
@@ -215,7 +252,7 @@ def make_right_group(qr, layout):
     result = [("right center", offset_to_svg(center, x_offset, qr_origin))]
     for side, squares in flanks:
         result.append((f"right {side}", offset_to_svg(squares, x_offset, qr_origin)))
-    return result
+    return [(l, trim_corners_diagonal(s, layout, trim_dx_ge_dy=False)) for l, s in result]
 
 
 def fmt(v: float) -> str:
