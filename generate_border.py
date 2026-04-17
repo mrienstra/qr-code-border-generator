@@ -160,15 +160,28 @@ def write_svg(
     print(f"\nWrote {output}")
 
 
-def make_flanking(center: set[tuple[int, int]], right_inset: int, left_inset: int):
+def make_flanking_h(center: set[tuple[int, int]], right_inset: int, left_inset: int):
     """Create left and right flanking copies from a center copy.
 
-    Each flanking copy is the center mirrored horizontally, then shifted.
+    Each flanking copy is the center mirrored horizontally, then shifted left/right.
+    Used by top/bottom groups.
     """
     mirrored = flip_horizontal(center)
     right = shift(mirrored, QR_SIZE - right_inset, 0)
     left = shift(mirrored, -(QR_SIZE - left_inset), 0)
     return left, right
+
+
+def make_flanking_v(center: set[tuple[int, int]], lower_inset: int, upper_inset: int):
+    """Create upper and lower flanking copies from a center copy.
+
+    Each flanking copy is the center mirrored vertically, then shifted up/down.
+    Used by left/right groups.
+    """
+    mirrored = flip_vertical(center)
+    upper = shift(mirrored, 0, -(QR_SIZE - upper_inset))
+    lower = shift(mirrored, 0, QR_SIZE - lower_inset)
+    return upper, lower
 
 
 def make_top_group(filtered: set[tuple[int, int]]) -> list[tuple[str, set[tuple[float, float]]]]:
@@ -179,7 +192,7 @@ def make_top_group(filtered: set[tuple[int, int]]) -> list[tuple[str, set[tuple[
     y_offset = QR_ORIGIN - GAP - QR_SIZE
 
     center = flip_vertical(filtered)
-    left, right = make_flanking(center, FLANK_INSET, FLANK_INSET)
+    left, right = make_flanking_h(center, FLANK_INSET, FLANK_INSET)
 
     return [
         ("top center", offset_to_svg(center, QR_ORIGIN, y_offset)),
@@ -200,12 +213,52 @@ def make_bottom_group(filtered: set[tuple[int, int]]) -> list[tuple[str, set[tup
     center = flip_vertical(filtered)
     # Left flanking: full inset (bottom-left has a finder pattern)
     # Right flanking: less inset (bottom-right has NO finder pattern)
-    left, right = make_flanking(center, FLANK_INSET_NO_FINDER, FLANK_INSET)
+    left, right = make_flanking_h(center, FLANK_INSET_NO_FINDER, FLANK_INSET)
 
     return [
         ("bottom center", offset_to_svg(center, QR_ORIGIN, y_offset)),
         ("bottom right", offset_to_svg(right, QR_ORIGIN, y_offset)),
         ("bottom left", offset_to_svg(left, QR_ORIGIN, y_offset)),
+    ]
+
+
+def make_left_group(filtered: set[tuple[int, int]]) -> list[tuple[str, set[tuple[float, float]]]]:
+    """Build the left decoration group.
+
+    Center copy is horizontally flipped, positioned to the left of QR.
+    Left side has finder patterns in both corners (top-left + bottom-left),
+    so both flanking copies use full FLANK_INSET.
+    """
+    x_offset = QR_ORIGIN - GAP - QR_SIZE
+
+    center = flip_horizontal(filtered)
+    upper, lower = make_flanking_v(center, FLANK_INSET, FLANK_INSET)
+
+    return [
+        ("left center", offset_to_svg(center, x_offset, QR_ORIGIN)),
+        ("left upper", offset_to_svg(upper, x_offset, QR_ORIGIN)),
+        ("left lower", offset_to_svg(lower, x_offset, QR_ORIGIN)),
+    ]
+
+
+def make_right_group(filtered: set[tuple[int, int]]) -> list[tuple[str, set[tuple[float, float]]]]:
+    """Build the right decoration group.
+
+    Center copy is horizontally flipped, positioned to the right of QR.
+    Right side has a finder pattern only in the top-right corner (no bottom-right),
+    so the lower flanking uses FLANK_INSET_NO_FINDER.
+    """
+    x_offset = QR_ORIGIN + QR_SIZE + GAP
+
+    center = flip_horizontal(filtered)
+    # Upper flanking: full inset (top-right has a finder pattern)
+    # Lower flanking: no-finder inset (bottom-right has NO finder pattern)
+    upper, lower = make_flanking_v(center, FLANK_INSET_NO_FINDER, FLANK_INSET)
+
+    return [
+        ("right center", offset_to_svg(center, x_offset, QR_ORIGIN)),
+        ("right upper", offset_to_svg(upper, x_offset, QR_ORIGIN)),
+        ("right lower", offset_to_svg(lower, x_offset, QR_ORIGIN)),
     ]
 
 
@@ -221,20 +274,23 @@ def main():
     qr_svg = offset_to_svg(qr, QR_ORIGIN, QR_ORIGIN)
     qr_path = squares_to_path(qr_svg)
 
-    # Debug colors: center=gray, right=red, left=blue
-    #                bottom variants are lighter
-    top_colors = ["#888888", "#cc4444", "#4444cc"]
-    bottom_colors = ["#aaaaaa", "#ee8888", "#8888ee"]
+    # Debug colors: center=gray, right/upper=red, left/lower=blue
+    group_colors = ["#888888", "#cc4444", "#4444cc"]
+    group_colors_light = ["#aaaaaa", "#ee8888", "#8888ee"]
+
+    groups = [
+        (make_top_group(filtered), group_colors),
+        (make_bottom_group(filtered), group_colors_light),
+        (make_left_group(filtered), group_colors),
+        (make_right_group(filtered), group_colors_light),
+    ]
 
     decoration_paths = []
-    for (label, svg_squares), color in zip(make_top_group(filtered), top_colors):
-        path_d = squares_to_path(svg_squares)
-        print(f"{label}: {len(svg_squares)} squares")
-        decoration_paths.append((label, path_d, color))
-    for (label, svg_squares), color in zip(make_bottom_group(filtered), bottom_colors):
-        path_d = squares_to_path(svg_squares)
-        print(f"{label}: {len(svg_squares)} squares")
-        decoration_paths.append((label, path_d, color))
+    for group, colors in groups:
+        for (label, svg_squares), color in zip(group, colors):
+            path_d = squares_to_path(svg_squares)
+            print(f"{label}: {len(svg_squares)} squares")
+            decoration_paths.append((label, path_d, color))
 
     # Write SVG
     write_svg(qr_path, decoration_paths, OUTPUT_SVG)
