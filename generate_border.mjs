@@ -195,6 +195,34 @@ function makeRightGroup(qr, layout) {
   return result.map(([l, s]) => [l, trimCornersDiagonal(s, layout, false)]);
 }
 
+// --- Border shape SDF (signed distance function) ---
+
+function shapeSDF(px, py, layout, radiusOffset) {
+  const cx = layout.circleCx, cy = layout.circleCy;
+  const r = layout.circleR + radiusOffset;
+  if (layout.borderShape === "square") {
+    const cr = layout.cornerRadius * r;
+    const qx = Math.abs(px - cx) - r + cr;
+    const qy = Math.abs(py - cy) - r + cr;
+    return Math.min(Math.max(qx, qy), 0) + Math.sqrt(Math.max(qx, 0) ** 2 + Math.max(qy, 0) ** 2) - cr;
+  }
+  return Math.sqrt((px - cx) ** 2 + (py - cy) ** 2) - r;
+}
+
+function pixelOverlapsStroke(x, y, layout, radiusOffset, strokeWidth) {
+  const hw = strokeWidth / 2;
+  const corners = [
+    shapeSDF(x, y, layout, radiusOffset),
+    shapeSDF(x + 1, y, layout, radiusOffset),
+    shapeSDF(x, y + 1, layout, radiusOffset),
+    shapeSDF(x + 1, y + 1, layout, radiusOffset),
+  ];
+  const minSDF = Math.min(...corners);
+  const maxSDF = Math.max(...corners);
+  // Pixel overlaps stroke if some part is inside outer edge AND some part is outside inner edge
+  return minSDF < hw && maxSDF > -hw;
+}
+
 // --- SVG output ---
 
 function fmt(v) {
@@ -220,7 +248,7 @@ function borderShapeElement(layout, attrs, radiusOffset = 0) {
 
 function generateSvg(qrPath, decorationPaths, layout, {
   bgColor = "#ffffff", bgShape = "rect", fgColor = "#000000", borderColor = "#000000",
-  border2Color = null, border2Width = 3, border2Offset = 0,
+  border2Color = null, border2Width = 4, border2Offset = 0,
 } = {}) {
   const s = fmt(layout.svgSize);
   const lines = [
@@ -270,8 +298,9 @@ export function generate(svgText, {
   borderShape = "circle",
   cornerRadius = 0,
   border2Color = null,
-  border2Width = 3,
+  border2Width = 4,
   border2Offset = 0,
+  border2Trim = false,
 } = {}) {
   const { squares: qr, qrSize } = parseQr(svgText);
   const layout = computeLayout(qrSize, circleRatio, strokeWidth, borderShape, cornerRadius);
@@ -285,6 +314,23 @@ export function generate(svgText, {
     ["left", makeLeftGroup(qr, layout)],
     ["right", makeRightGroup(qr, layout)],
   ];
+
+  // Remove fluff pixels that overlap with the second border's stroke area
+  if (border2Color !== null && border2Trim) {
+    for (const [, group] of allGroups) {
+      for (let i = 0; i < group.length; i++) {
+        const [label, svgSquares] = group[i];
+        const filtered = new Set();
+        for (const k of svgSquares) {
+          const [x, y] = unkey(k);
+          if (!pixelOverlapsStroke(x, y, layout, border2Offset, border2Width)) {
+            filtered.add(k);
+          }
+        }
+        group[i] = [label, filtered];
+      }
+    }
+  }
 
   const decorationPaths = [];
   for (const [groupName, group] of allGroups) {
@@ -319,8 +365,9 @@ async function cli() {
       "border-shape": { type: "string", default: "circle" },
       "corner-radius": { type: "string", default: "0" },
       "border2-color": { type: "string" },
-      "border2-width": { type: "string", default: "3" },
+      "border2-width": { type: "string", default: "4" },
       "border2-offset": { type: "string", default: "0" },
+      "border2-trim": { type: "boolean", default: false },
     },
   });
 
@@ -344,6 +391,7 @@ async function cli() {
     border2Color: values["border2-color"] || null,
     border2Width: parseFloat(values["border2-width"]),
     border2Offset: parseFloat(values["border2-offset"]),
+    border2Trim: values["border2-trim"],
   });
 
   writeFileSync(values.output, result);
