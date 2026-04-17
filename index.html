@@ -159,6 +159,32 @@
               <input type="color" id="border-color" value="#000000" style="width:2.5em;height:2em;padding:0;border:1px solid #ccc;border-radius:4px;">
             </div>
           </div>
+          <div class="checkbox-row">
+            <input type="checkbox" id="border2-enabled">
+            <label for="border2-enabled">Second border</label>
+          </div>
+          <div id="border2-fields" style="display:none">
+            <div class="field">
+              <label>Second border color</label>
+              <div class="field-row">
+                <input type="color" id="border2-color" value="#ffffff" style="width:2.5em;height:2em;padding:0;border:1px solid #ccc;border-radius:4px;">
+              </div>
+            </div>
+            <div class="field">
+              <label>Second border width</label>
+              <div class="field-row">
+                <input type="range" id="border2-width" min="0" max="10" step="0.25" value="3">
+                <span class="range-value" id="border2-width-value">3</span>
+              </div>
+            </div>
+            <div class="field">
+              <label>Second border offset</label>
+              <div class="field-row">
+                <input type="range" id="border2-offset" min="-5" max="5" step="0.25" value="0">
+                <span class="range-value" id="border2-offset-value">0</span>
+              </div>
+            </div>
+          </div>
           <div class="field">
             <label>Background color</label>
             <div class="field-row">
@@ -223,6 +249,13 @@
     const strokeWidthValue = document.getElementById("stroke-width-value");
     const fgColor = document.getElementById("fg-color");
     const borderColorInput = document.getElementById("border-color");
+    const border2Enabled = document.getElementById("border2-enabled");
+    const border2Fields = document.getElementById("border2-fields");
+    const border2Color = document.getElementById("border2-color");
+    const border2Width = document.getElementById("border2-width");
+    const border2WidthValue = document.getElementById("border2-width-value");
+    const border2Offset = document.getElementById("border2-offset");
+    const border2OffsetValue = document.getElementById("border2-offset-value");
     const bgColor = document.getElementById("bg-color");
     const bgAlpha = document.getElementById("bg-alpha");
     const bgAlphaValue = document.getElementById("bg-alpha-value");
@@ -313,6 +346,9 @@
         borderColor: borderColorInput.value,
         borderShape: document.querySelector('input[name="border-shape"]:checked').value,
         cornerRadius: parseFloat(cornerRadius.value),
+        border2Color: border2Enabled.checked ? border2Color.value : null,
+        border2Width: parseFloat(border2Width.value),
+        border2Offset: parseFloat(border2Offset.value),
       });
 
       currentOutputSvg = result;
@@ -361,6 +397,19 @@
     });
     fgColor.addEventListener("input", redraw);
     borderColorInput.addEventListener("input", redraw);
+    border2Enabled.addEventListener("change", () => {
+      border2Fields.style.display = border2Enabled.checked ? "" : "none";
+      redraw();
+    });
+    border2Color.addEventListener("input", redraw);
+    border2Width.addEventListener("input", () => {
+      border2WidthValue.textContent = parseFloat(border2Width.value).toFixed(border2Width.value % 1 ? 2 : 0);
+      redraw();
+    });
+    border2Offset.addEventListener("input", () => {
+      border2OffsetValue.textContent = parseFloat(border2Offset.value).toFixed(border2Offset.value % 1 ? 2 : 0);
+      redraw();
+    });
     bgColor.addEventListener("input", redraw);
     bgAlpha.addEventListener("input", () => {
       bgAlphaValue.textContent = parseFloat(bgAlpha.value).toFixed(2);

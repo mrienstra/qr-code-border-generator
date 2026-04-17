@@ -204,21 +204,23 @@ function fmt(v) {
   return s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s;
 }
 
-function borderShapeElement(layout, attrs) {
-  const cx = fmt(layout.circleCx), cy = fmt(layout.circleCy), r = fmt(layout.circleR);
+function borderShapeElement(layout, attrs, radiusOffset = 0) {
+  const r = layout.circleR + radiusOffset;
+  const cx = fmt(layout.circleCx), cy = fmt(layout.circleCy);
   const attrStr = attrs ? " " + attrs : "";
   if (layout.borderShape === "square") {
-    const x = fmt(layout.circleCx - layout.circleR);
-    const y = fmt(layout.circleCy - layout.circleR);
-    const side = fmt(2 * layout.circleR);
-    const rx = fmt(layout.cornerRadius * layout.circleR);
+    const x = fmt(layout.circleCx - r);
+    const y = fmt(layout.circleCy - r);
+    const side = fmt(2 * r);
+    const rx = fmt(layout.cornerRadius * r);
     return `<rect x="${x}" y="${y}" width="${side}" height="${side}" rx="${rx}" ry="${rx}"${attrStr}/>`;
   }
-  return `<circle cx="${cx}" cy="${cy}" r="${r}"${attrStr}/>`;
+  return `<circle cx="${cx}" cy="${cy}" r="${fmt(r)}"${attrStr}/>`;
 }
 
 function generateSvg(qrPath, decorationPaths, layout, {
   bgColor = "#ffffff", bgShape = "rect", fgColor = "#000000", borderColor = "#000000",
+  border2Color = null, border2Width = 3, border2Offset = 0,
 } = {}) {
   const s = fmt(layout.svgSize);
   const lines = [
@@ -243,6 +245,11 @@ function generateSvg(qrPath, decorationPaths, layout, {
     lines.push(`    <path d="${pathD}" fill="${color}"/>`);
   }
   lines.push(`  </g>`);
+  if (border2Color !== null) {
+    lines.push(
+      `  ${borderShapeElement(layout, `fill="none" stroke="${border2Color}" stroke-width="${fmt(border2Width)}"`, border2Offset)}`
+    );
+  }
   lines.push(
     `  ${borderShapeElement(layout, `fill="none" stroke="${borderColor}" stroke-width="${fmt(layout.strokeWidth)}"`)}`
   );
@@ -262,6 +269,9 @@ export function generate(svgText, {
   borderColor = "#000000",
   borderShape = "circle",
   cornerRadius = 0,
+  border2Color = null,
+  border2Width = 3,
+  border2Offset = 0,
 } = {}) {
   const { squares: qr, qrSize } = parseQr(svgText);
   const layout = computeLayout(qrSize, circleRatio, strokeWidth, borderShape, cornerRadius);
@@ -286,7 +296,7 @@ export function generate(svgText, {
     }
   }
 
-  return generateSvg(qrPath, decorationPaths, layout, { bgColor, bgShape, fgColor, borderColor });
+  return generateSvg(qrPath, decorationPaths, layout, { bgColor, bgShape, fgColor, borderColor, border2Color, border2Width, border2Offset });
 }
 
 // --- Node CLI ---
@@ -308,6 +318,9 @@ async function cli() {
       "border-color": { type: "string", default: "#000000" },
       "border-shape": { type: "string", default: "circle" },
       "corner-radius": { type: "string", default: "0" },
+      "border2-color": { type: "string" },
+      "border2-width": { type: "string", default: "3" },
+      "border2-offset": { type: "string", default: "0" },
     },
   });
 
@@ -328,6 +341,9 @@ async function cli() {
     borderColor: values["border-color"],
     borderShape: values["border-shape"],
     cornerRadius: parseFloat(values["corner-radius"]),
+    border2Color: values["border2-color"] || null,
+    border2Width: parseFloat(values["border2-width"]),
+    border2Offset: parseFloat(values["border2-offset"]),
   });
 
   writeFileSync(values.output, result);
