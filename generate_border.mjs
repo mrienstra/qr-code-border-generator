@@ -204,12 +204,18 @@ function fmt(v) {
   return s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s;
 }
 
-function generateSvg(qrPath, decorationPaths, layout) {
+function generateSvg(qrPath, decorationPaths, layout, bgColor = "#ffffff", bgShape = "rect") {
   const s = fmt(layout.svgSize);
   const cx = fmt(layout.circleCx), cy = fmt(layout.circleCy), r = fmt(layout.circleR);
   const lines = [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${s} ${s}">`,
-    `  <rect width="100%" height="100%" fill="#ffffff"/>`,
+  ];
+  if (bgShape === "circle") {
+    lines.push(`  <circle cx="${cx}" cy="${cy}" r="${r}" fill="${bgColor}"/>`);
+  } else {
+    lines.push(`  <rect width="100%" height="100%" fill="${bgColor}"/>`);
+  }
+  lines.push(
     `  <defs>`,
     `    <clipPath id="circle-clip">`,
     `      <circle cx="${cx}" cy="${cy}" r="${r}"/>`,
@@ -217,7 +223,7 @@ function generateSvg(qrPath, decorationPaths, layout) {
     `  </defs>`,
     `  <g clip-path="url(#circle-clip)">`,
     `    <path d="${qrPath}"/>`,
-  ];
+  );
   for (const [label, pathD, color] of decorationPaths) {
     lines.push(`    <!-- ${label} -->`);
     lines.push(`    <path d="${pathD}" fill="${color}"/>`);
@@ -233,7 +239,13 @@ function generateSvg(qrPath, decorationPaths, layout) {
 
 // --- Main entry point ---
 
-export function generate(svgText, { colorful = false, circleRatio = CIRCLE_RATIO, strokeWidth = CIRCLE_STROKE_WIDTH } = {}) {
+export function generate(svgText, {
+  colorful = false,
+  circleRatio = CIRCLE_RATIO,
+  strokeWidth = CIRCLE_STROKE_WIDTH,
+  bgColor = "#ffffff",
+  bgShape = "rect",
+} = {}) {
   const { squares: qr, qrSize } = parseQr(svgText);
   const layout = computeLayout(qrSize, circleRatio, strokeWidth);
 
@@ -257,7 +269,7 @@ export function generate(svgText, { colorful = false, circleRatio = CIRCLE_RATIO
     }
   }
 
-  return generateSvg(qrPath, decorationPaths, layout);
+  return generateSvg(qrPath, decorationPaths, layout, bgColor, bgShape);
 }
 
 // --- Node CLI ---
@@ -273,6 +285,8 @@ async function cli() {
       colorful: { type: "boolean", default: false },
       "circle-ratio": { type: "string", default: String(CIRCLE_RATIO) },
       "stroke-width": { type: "string", default: String(CIRCLE_STROKE_WIDTH) },
+      "bg-color": { type: "string", default: "#ffffff" },
+      "bg-shape": { type: "string", default: "rect" },
     },
   });
 
@@ -287,6 +301,8 @@ async function cli() {
     colorful: values.colorful,
     circleRatio: parseFloat(values["circle-ratio"]),
     strokeWidth: parseFloat(values["stroke-width"]),
+    bgColor: values["bg-color"],
+    bgShape: values["bg-shape"],
   });
 
   writeFileSync(values.output, result);
