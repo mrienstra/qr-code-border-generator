@@ -13,9 +13,17 @@ FLANK_INSET = 2 * FINDER_ZONE - FLANK_GAP  # both corners have finders (15)
 FLANK_INSET_NO_FINDER = -FLANK_GAP  # adjacent corner has no finder (-1)
 
 # --- Circle / layout ---
-CIRCLE_RATIO = 27 / 33  # circle radius as a proportion of QR size
+CIRCLE_RATIO = 27 / 33  # circle radius as a proportion of QR size (default 0.81818)
 CIRCLE_MARGIN = 3  # space between circle edge and viewBox edge
 CIRCLE_STROKE_WIDTH = 2
+
+# Cycle through these for debug coloring: center, then alternating flanks
+DEBUG_PALETTE = {
+    "top": ["#888888", "#cc4444", "#4444cc", "#cc8844", "#4488cc"],
+    "bottom": ["#aaaaaa", "#ee8888", "#8888ee", "#eeaa88", "#88aaee"],
+    "left": ["#888888", "#cc4444", "#4444cc", "#cc8844", "#4488cc"],
+    "right": ["#aaaaaa", "#ee8888", "#8888ee", "#eeaa88", "#88aaee"],
+}
 
 
 def parse_qr(svg_path: str) -> tuple[set[tuple[int, int]], int]:
@@ -47,9 +55,10 @@ def parse_qr(svg_path: str) -> tuple[set[tuple[int, int]], int]:
     return squares, qr_size
 
 
-def compute_layout(qr_size: int) -> dict:
+def compute_layout(qr_size: int, circle_ratio: float = CIRCLE_RATIO,
+                    stroke_width: float = CIRCLE_STROKE_WIDTH) -> dict:
     """Compute SVG layout values from QR size."""
-    circle_r = qr_size * CIRCLE_RATIO
+    circle_r = qr_size * circle_ratio
     svg_size = 2 * circle_r + 2 * CIRCLE_MARGIN
     qr_origin = (svg_size - qr_size) / 2
     return {
@@ -59,6 +68,7 @@ def compute_layout(qr_size: int) -> dict:
         "circle_cx": svg_size / 2,
         "circle_cy": svg_size / 2,
         "circle_r": circle_r,
+        "stroke_width": stroke_width,
     }
 
 
@@ -287,22 +297,13 @@ def write_svg(
     lines.append("  </g>")
     lines.append(
         f'  <circle cx="{cx}" cy="{cy}" r="{r}"'
-        f' fill="none" stroke="#000000" stroke-width="{CIRCLE_STROKE_WIDTH}"/>'
+        f' fill="none" stroke="#000000" stroke-width="{fmt(layout["stroke_width"])}"/>'
     )
     lines.append("</svg>")
 
     with open(output, "w") as f:
         f.write("\n".join(lines))
     print(f"\nWrote {output}")
-
-
-# Cycle through these for debug coloring: center, then alternating flanks
-DEBUG_PALETTE = {
-    "top": ["#888888", "#cc4444", "#4444cc", "#cc8844", "#4488cc"],
-    "bottom": ["#aaaaaa", "#ee8888", "#8888ee", "#eeaa88", "#88aaee"],
-    "left": ["#888888", "#cc4444", "#4444cc", "#cc8844", "#4488cc"],
-    "right": ["#aaaaaa", "#ee8888", "#8888ee", "#eeaa88", "#88aaee"],
-}
 
 
 def main():
@@ -324,10 +325,22 @@ def main():
         action="store_true",
         help="Use distinct colors per copy for debugging",
     )
+    parser.add_argument(
+        "--circle-ratio",
+        type=float,
+        default=CIRCLE_RATIO,
+        help=f"Circle radius as proportion of QR size (default: {CIRCLE_RATIO:.4f})",
+    )
+    parser.add_argument(
+        "--stroke-width",
+        type=float,
+        default=CIRCLE_STROKE_WIDTH,
+        help=f"Circle border stroke width (default: {CIRCLE_STROKE_WIDTH})",
+    )
     args = parser.parse_args()
 
     qr, qr_size = parse_qr(args.input)
-    layout = compute_layout(qr_size)
+    layout = compute_layout(qr_size, args.circle_ratio, args.stroke_width)
     print(
         f"Parsed {len(qr)} squares, SVG {layout['svg_size']}x{layout['svg_size']}, "
         f"circle r={layout['circle_r']}"
