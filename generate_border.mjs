@@ -90,6 +90,12 @@ function flipHorizontal(squares, qrSize) {
   return result;
 }
 
+function rotate90(squares, qrSize) {
+  const result = new Set();
+  for (const k of squares) { const [c, r] = unkey(k); result.add(key(qrSize - 1 - r, c)); }
+  return result;
+}
+
 function shift(squares, dc, dr) {
   const result = new Set();
   for (const k of squares) { const [c, r] = unkey(k); result.add(key(c + dc, r + dr)); }
@@ -152,44 +158,44 @@ function makeFlankingV(center, qrSize, lowerInset, upperInset, reps = 1) {
 
 // --- Group builders ---
 
-function makeTopGroup(qr, layout, reps = 2) {
+function makeTopGroup(qr, layout, reps = 2, transform = null) {
   const { qrSize, qrOrigin } = layout;
   const yOff = qrOrigin - GAP - qrSize;
   const trimmed = trimEdges(qr, qrSize, { left: true, right: true });
-  const center = flipVertical(trimmed, qrSize);
+  const center = flipVertical(transform ? transform(trimmed, qrSize) : trimmed, qrSize);
   const flanks = makeFlankingH(center, qrSize, FLANK_INSET, FLANK_INSET, reps);
   const result = [["top center", offsetToSvg(center, qrOrigin, yOff)]];
   for (const [side, sq] of flanks) result.push([`top ${side}`, offsetToSvg(sq, qrOrigin, yOff)]);
   return result.map(([l, s]) => [l, trimCornersDiagonal(s, layout, true)]);
 }
 
-function makeBottomGroup(qr, layout) {
+function makeBottomGroup(qr, layout, transform = null) {
   const { qrSize, qrOrigin } = layout;
   const yOff = qrOrigin + qrSize + GAP;
   const trimmed = trimEdges(qr, qrSize, { left: true });
-  const center = flipVertical(trimmed, qrSize);
+  const center = flipVertical(transform ? transform(trimmed, qrSize) : trimmed, qrSize);
   const flanks = makeFlankingH(center, qrSize, FLANK_INSET_NO_FINDER, FLANK_INSET);
   const result = [["bottom center", offsetToSvg(center, qrOrigin, yOff)]];
   for (const [side, sq] of flanks) result.push([`bottom ${side}`, offsetToSvg(sq, qrOrigin, yOff)]);
   return result.map(([l, s]) => [l, trimCornersDiagonal(s, layout, true)]);
 }
 
-function makeLeftGroup(qr, layout, reps = 2) {
+function makeLeftGroup(qr, layout, reps = 2, transform = null) {
   const { qrSize, qrOrigin } = layout;
   const xOff = qrOrigin - GAP - qrSize;
   const trimmed = trimEdges(qr, qrSize, { top: true, bottom: true });
-  const center = flipHorizontal(trimmed, qrSize);
+  const center = flipHorizontal(transform ? transform(trimmed, qrSize) : trimmed, qrSize);
   const flanks = makeFlankingV(center, qrSize, FLANK_INSET, FLANK_INSET, reps);
   const result = [["left center", offsetToSvg(center, xOff, qrOrigin)]];
   for (const [side, sq] of flanks) result.push([`left ${side}`, offsetToSvg(sq, xOff, qrOrigin)]);
   return result.map(([l, s]) => [l, trimCornersDiagonal(s, layout, false)]);
 }
 
-function makeRightGroup(qr, layout) {
+function makeRightGroup(qr, layout, transform = null) {
   const { qrSize, qrOrigin } = layout;
   const xOff = qrOrigin + qrSize + GAP;
   const trimmed = trimEdges(qr, qrSize, { top: true });
-  const center = flipHorizontal(trimmed, qrSize);
+  const center = flipHorizontal(transform ? transform(trimmed, qrSize) : trimmed, qrSize);
   const flanks = makeFlankingV(center, qrSize, FLANK_INSET_NO_FINDER, FLANK_INSET);
   const result = [["right center", offsetToSvg(center, xOff, qrOrigin)]];
   for (const [side, sq] of flanks) result.push([`right ${side}`, offsetToSvg(sq, xOff, qrOrigin)]);
@@ -303,6 +309,7 @@ export function generate(svgText, {
   border2Offset = 0,
   border2Trim = false,
   snapRadius = false,
+  shuffle = false,
 } = {}) {
   const { squares: qr, qrSize } = parseQr(svgText);
   const layout = computeLayout(qrSize, circleRatio, strokeWidth, borderShape, cornerRadius, snapRadius);
@@ -316,6 +323,58 @@ export function generate(svgText, {
     ["left", makeLeftGroup(qr, layout)],
     ["right", makeRightGroup(qr, layout)],
   ];
+
+  // Shuffle: swap center pieces across the diagonal (top↔left, bottom↔right)
+  // and flip one flanking piece per side to break repetition
+  if (shuffle) {
+    const transpose = (squares) => {
+      const result = new Set();
+      for (const k of squares) { const [x, y] = unkey(k); result.add(key(y, x)); }
+      return result;
+    };
+    const flipLocalV = (squares) => {
+      let minY = Infinity, maxY = -Infinity;
+      for (const k of squares) { const [, y] = unkey(k); minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
+      const result = new Set();
+      for (const k of squares) { const [x, y] = unkey(k); result.add(key(x, minY + maxY - y)); }
+      return result;
+    };
+    const flipLocalH = (squares) => {
+      let minX = Infinity, maxX = -Infinity;
+      for (const k of squares) { const [x] = unkey(k); minX = Math.min(minX, x); maxX = Math.max(maxX, x); }
+      const result = new Set();
+      for (const k of squares) { const [x, y] = unkey(k); result.add(key(minX + maxX - x, y)); }
+      return result;
+    };
+
+    // Swap center pieces
+    const refs = {};
+    for (const [, group] of allGroups) {
+      for (let i = 0; i < group.length; i++) {
+        refs[group[i][0]] = [group, i];
+      }
+    }
+    if (refs["top center"] && refs["left center"]) {
+      const ts = refs["top center"][0][refs["top center"][1]][1];
+      const ls = refs["left center"][0][refs["left center"][1]][1];
+      refs["top center"][0][refs["top center"][1]] = ["top center", transpose(ls)];
+      refs["left center"][0][refs["left center"][1]] = ["left center", transpose(ts)];
+    }
+    if (refs["bottom center"] && refs["right center"]) {
+      const bs = refs["bottom center"][0][refs["bottom center"][1]][1];
+      const rs = refs["right center"][0][refs["right center"][1]][1];
+      refs["bottom center"][0][refs["bottom center"][1]] = ["bottom center", transpose(rs)];
+      refs["right center"][0][refs["right center"][1]] = ["right center", transpose(bs)];
+    }
+
+    // Flip one flanking piece in top and left groups to break symmetry
+    for (const [name, group] of allGroups) {
+      if ((name === "top" || name === "left") && group.length > 1) {
+        const [label, squares] = group[1];
+        group[1] = [label, name === "top" ? flipLocalV(squares) : flipLocalH(squares)];
+      }
+    }
+  }
 
   // Remove fluff pixels that overlap with the second border's stroke area
   if (border2Color !== null && border2Trim) {
@@ -371,6 +430,7 @@ async function cli() {
       "border2-offset": { type: "string", default: "0" },
       "border2-trim": { type: "boolean", default: false },
       "snap-radius": { type: "boolean", default: false },
+      "shuffle": { type: "boolean", default: false },
     },
   });
 
@@ -396,6 +456,7 @@ async function cli() {
     border2Offset: parseFloat(values["border2-offset"]),
     border2Trim: values["border2-trim"],
     snapRadius: values["snap-radius"],
+    shuffle: values["shuffle"],
   });
 
   writeFileSync(values.output, result);

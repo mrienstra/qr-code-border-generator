@@ -215,6 +215,10 @@
             </div>
           </div>
           <div class="checkbox-row">
+            <input type="checkbox" id="shuffle">
+            <label for="shuffle">Shuffle fluff</label>
+          </div>
+          <div class="checkbox-row">
             <input type="checkbox" id="colorful">
             <label for="colorful">Colorful (debug)</label>
           </div>
@@ -282,6 +286,7 @@
     const bgAlpha = document.getElementById("bg-alpha");
     const bgAlphaValue = document.getElementById("bg-alpha-value");
     const bgShapeRadios = document.querySelectorAll('input[name="bg-shape"]');
+    const shuffleCheckbox = document.getElementById("shuffle");
     const colorful = document.getElementById("colorful");
     const previewSvg = document.getElementById("preview-svg");
     const statsEl = document.getElementById("stats");
@@ -343,7 +348,7 @@
       shape: "circle", cr: "0", snap: "0", ratio: "0.82", sw: "2",
       fg: "000000", fga: "1", bc: "000000", bca: "1",
       b2: "0", b2c: "ffffff", b2a: "1", b2w: "4", b2o: "0", b2t: "0",
-      bg: "ffffff", bga: "1", bgs: "circle", dbg: "0",
+      bg: "ffffff", bga: "1", bgs: "circle", shuf: "0", dbg: "0",
     };
 
     function saveToUrl() {
@@ -362,6 +367,7 @@
         b2w: border2Width.value, b2o: border2Offset.value, b2t: border2Trim.checked ? "1" : "0",
         bg: bgColor.value.slice(1), bga: bgAlpha.value,
         bgs: document.querySelector('input[name="bg-shape"]:checked').value,
+        shuf: shuffleCheckbox.checked ? "1" : "0",
         dbg: colorful.checked ? "1" : "0",
       };
       const params = new URLSearchParams();
@@ -417,6 +423,7 @@
         const r = document.querySelector(`input[name="bg-shape"][value="${get("bgs")}"]`);
         if (r) r.checked = true;
       }
+      if (get("shuf") != null) shuffleCheckbox.checked = get("shuf") === "1";
       if (get("dbg") != null) colorful.checked = get("dbg") === "1";
     }
 
@@ -452,6 +459,7 @@
         border2Offset: parseFloat(border2Offset.value),
         border2Trim: border2Trim.checked,
         snapRadius: snapRadiusCheckbox.checked,
+        shuffle: shuffleCheckbox.checked,
       });
 
       currentOutputSvg = result;
@@ -534,6 +542,7 @@
       redraw();
     });
     bgShapeRadios.forEach(r => r.addEventListener("change", redraw));
+    shuffleCheckbox.addEventListener("change", redraw);
     colorful.addEventListener("change", redraw);
 
     // Download
