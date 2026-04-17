@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>QR Code Border Generator</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #f5f5f5; color: #333; }
+    .container { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+    h1 { text-align: center; margin-bottom: 1.5rem; font-size: 1.5rem; }
+    .layout { display: flex; gap: 1.5rem; }
+    .controls { flex: 0 0 340px; }
+    .preview { flex: 1; display: flex; flex-direction: column; align-items: center; }
+
+    .panel {
+      background: #fff; border-radius: 8px; padding: 1rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 1rem;
+    }
+    .panel h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em;
+      color: #888; margin-bottom: 0.75rem; }
+
+    .field { margin-bottom: 0.6rem; }
+    .field label { display: block; font-size: 0.85rem; font-weight: 500; margin-bottom: 0.2rem; }
+    .field-row { display: flex; align-items: center; gap: 0.5rem; }
+    .field input[type=text], .field textarea, .field select {
+      width: 100%; padding: 0.4rem 0.5rem; border: 1px solid #ccc; border-radius: 4px;
+      font-size: 0.9rem; font-family: inherit;
+    }
+    .field textarea { height: 4em; resize: vertical; }
+    .field input[type=number] {
+      width: 5em; padding: 0.3rem 0.4rem; border: 1px solid #ccc; border-radius: 4px;
+      font-size: 0.9rem;
+    }
+    .field input[type=range] { flex: 1; }
+    .field .range-value { font-size: 0.85rem; min-width: 3.5em; text-align: right; font-variant-numeric: tabular-nums; }
+
+    .radio-group { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+    .radio-group label { font-size: 0.85rem; cursor: pointer; }
+    .radio-group input { margin-right: 0.15rem; }
+
+    .checkbox-row { display: flex; align-items: center; gap: 0.3rem; }
+    .checkbox-row label { font-size: 0.85rem; cursor: pointer; }
+
+    #preview-svg {
+      width: 100%; max-width: 500px; aspect-ratio: 1;
+      background: #e8e8e8; border-radius: 8px; padding: 1rem;
+    }
+    #preview-svg svg { width: 100%; height: 100%; }
+
+    .stats { font-size: 0.8rem; color: #888; margin-top: 0.5rem; text-align: center; }
+
+    .btn-row { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+    .btn {
+      flex: 1; padding: 0.5rem; border: none; border-radius: 4px; cursor: pointer;
+      font-size: 0.85rem; font-weight: 500;
+    }
+    .btn-primary { background: #333; color: #fff; }
+    .btn-primary:hover { background: #555; }
+    .btn-secondary { background: #e0e0e0; color: #333; }
+    .btn-secondary:hover { background: #d0d0d0; }
+
+    .separator { border-top: 1px solid #eee; margin: 0.75rem 0; }
+
+    .file-upload { position: relative; }
+    .file-upload input[type=file] { width: 100%; font-size: 0.85rem; }
+
+    @media (max-width: 760px) {
+      .layout { flex-direction: column; }
+      .controls { flex: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>QR Code Border Generator</h1>
+    <div class="layout">
+      <div class="controls">
+
+        <div class="panel">
+          <h2>QR Code</h2>
+          <div class="field">
+            <label>Text</label>
+            <textarea id="text-input" placeholder="Enter text for QR code">https://example.com</textarea>
+          </div>
+          <div class="field">
+            <label>Error correction</label>
+            <div class="radio-group">
+              <label><input type="radio" name="ecc" value="low" checked>Low</label>
+              <label><input type="radio" name="ecc" value="medium">Medium</label>
+              <label><input type="radio" name="ecc" value="quartile">Quartile</label>
+              <label><input type="radio" name="ecc" value="high">High</label>
+            </div>
+          </div>
+          <div class="field">
+            <label>Version range</label>
+            <div class="field-row">
+              <input type="number" id="version-min" value="1" min="1" max="40" step="1">
+              <span>to</span>
+              <input type="number" id="version-max" value="40" min="1" max="40" step="1">
+            </div>
+          </div>
+          <div class="field">
+            <label>Mask pattern</label>
+            <div class="field-row">
+              <input type="number" id="mask-input" value="-1" min="-1" max="7" step="1">
+              <span style="font-size:0.8rem;color:#888">(-1 = auto)</span>
+            </div>
+          </div>
+          <div class="checkbox-row">
+            <input type="checkbox" id="boost-ecc" checked>
+            <label for="boost-ecc">Boost ECC within same version</label>
+          </div>
+          <div class="separator"></div>
+          <div class="field file-upload">
+            <label>Or upload existing SVG</label>
+            <input type="file" id="file-input" accept=".svg">
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Border</h2>
+          <div class="field">
+            <label>Circle ratio</label>
+            <div class="field-row">
+              <input type="range" id="circle-ratio" min="0.5" max="1.3" step="0.01" value="0.8182">
+              <span class="range-value" id="circle-ratio-value">0.82</span>
+            </div>
+          </div>
+          <div class="field">
+            <label>Stroke width</label>
+            <div class="field-row">
+              <input type="range" id="stroke-width" min="0" max="5" step="0.25" value="2">
+              <span class="range-value" id="stroke-width-value">2</span>
+            </div>
+          </div>
+          <div class="checkbox-row">
+            <input type="checkbox" id="colorful">
+            <label for="colorful">Colorful (debug)</label>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-primary" id="download-btn">Download SVG</button>
+        </div>
+      </div>
+
+      <div class="preview">
+        <div id="preview-svg"></div>
+        <div class="stats" id="stats"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="qrcodegen.js"></script>
+  <script type="module">
+    import { generate, parseQr } from "./generate_border.mjs";
+
+    const QrCode = qrcodegen.QrCode;
+    const QrSegment = qrcodegen.QrSegment;
+    const Ecc = QrCode.Ecc;
+
+    // --- State ---
+    let currentSvgSource = null; // raw QR SVG text (from generator or upload)
+    let currentOutputSvg = null; // bordered SVG text
+    let uploadedSvg = null;
+
+    // --- Elements ---
+    const textInput = document.getElementById("text-input");
+    const eccRadios = document.querySelectorAll('input[name="ecc"]');
+    const versionMin = document.getElementById("version-min");
+    const versionMax = document.getElementById("version-max");
+    const maskInput = document.getElementById("mask-input");
+    const boostEcc = document.getElementById("boost-ecc");
+    const fileInput = document.getElementById("file-input");
+    const circleRatio = document.getElementById("circle-ratio");
+    const circleRatioValue = document.getElementById("circle-ratio-value");
+    const strokeWidth = document.getElementById("stroke-width");
+    const strokeWidthValue = document.getElementById("stroke-width-value");
+    const colorful = document.getElementById("colorful");
+    const previewSvg = document.getElementById("preview-svg");
+    const statsEl = document.getElementById("stats");
+    const downloadBtn = document.getElementById("download-btn");
+
+    // --- QR generation (using Nayuki library) ---
+
+    function getEcc() {
+      const val = document.querySelector('input[name="ecc"]:checked').value;
+      return { low: Ecc.LOW, medium: Ecc.MEDIUM, quartile: Ecc.QUARTILE, high: Ecc.HIGH }[val];
+    }
+
+    function qrToSvgString(qr) {
+      // Generate SVG with border=0 so our parser gets 0-indexed coordinates
+      const parts = [];
+      for (let y = 0; y < qr.size; y++)
+        for (let x = 0; x < qr.size; x++)
+          if (qr.getModule(x, y))
+            parts.push(`M${x},${y}h1v1h-1z`);
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${qr.size} ${qr.size}">` +
+        `<path d="${parts.join(" ")}"/></svg>`;
+    }
+
+    function generateQrSvg() {
+      const text = textInput.value;
+      const ecc = getEcc();
+      const minV = Math.max(1, Math.min(40, parseInt(versionMin.value) || 1));
+      const maxV = Math.max(minV, Math.min(40, parseInt(versionMax.value) || 40));
+      const mask = parseInt(maskInput.value) || -1;
+      const boost = boostEcc.checked;
+
+      try {
+        const segs = QrSegment.makeSegments(text);
+        const qr = QrCode.encodeSegments(segs, ecc, minV, maxV, mask, boost);
+        const version = (qr.size - 17) / 4;
+        statsEl.textContent = `Version ${version}, ${qr.size}x${qr.size}, mask ${qr.mask}, ECC ${"LMQH"[qr.errorCorrectionLevel.ordinal]}`;
+        return qrToSvgString(qr);
+      } catch (e) {
+        statsEl.textContent = e.message;
+        return null;
+      }
+    }
+
+    // --- Redraw ---
+
+    function redraw() {
+      const svgText = uploadedSvg || generateQrSvg();
+      if (!svgText) {
+        previewSvg.innerHTML = "";
+        currentOutputSvg = null;
+        return;
+      }
+      currentSvgSource = svgText;
+
+      if (uploadedSvg) {
+        const { qrSize } = parseQr(svgText);
+        const version = (qrSize - 17) / 4;
+        statsEl.textContent = `Uploaded: version ${version}, ${qrSize}x${qrSize}`;
+      }
+
+      const result = generate(svgText, {
+        colorful: colorful.checked,
+        circleRatio: parseFloat(circleRatio.value),
+        strokeWidth: parseFloat(strokeWidth.value),
+      });
+
+      currentOutputSvg = result;
+      previewSvg.innerHTML = result;
+    }
+
+    // --- Event listeners ---
+
+    // QR options
+    textInput.addEventListener("input", () => { uploadedSvg = null; fileInput.value = ""; redraw(); });
+    eccRadios.forEach(r => r.addEventListener("change", () => { uploadedSvg = null; fileInput.value = ""; redraw(); }));
+    versionMin.addEventListener("input", () => { uploadedSvg = null; fileInput.value = ""; redraw(); });
+    versionMax.addEventListener("input", () => { uploadedSvg = null; fileInput.value = ""; redraw(); });
+    maskInput.addEventListener("input", () => { uploadedSvg = null; fileInput.value = ""; redraw(); });
+    boostEcc.addEventListener("change", () => { uploadedSvg = null; fileInput.value = ""; redraw(); });
+
+    // File upload
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        uploadedSvg = reader.result;
+        redraw();
+      };
+      reader.readAsText(file);
+    });
+
+    // Border options
+    circleRatio.addEventListener("input", () => {
+      circleRatioValue.textContent = parseFloat(circleRatio.value).toFixed(2);
+      redraw();
+    });
+    strokeWidth.addEventListener("input", () => {
+      strokeWidthValue.textContent = parseFloat(strokeWidth.value).toFixed(strokeWidth.value % 1 ? 2 : 0);
+      redraw();
+    });
+    colorful.addEventListener("change", redraw);
+
+    // Download
+    downloadBtn.addEventListener("click", () => {
+      if (!currentOutputSvg) return;
+      const blob = new Blob([currentOutputSvg], { type: "image/svg+xml" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "qr-code-border.svg";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    // --- Init ---
+    redraw();
+  </script>
+</body>
+</html>
