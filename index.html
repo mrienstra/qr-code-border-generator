@@ -214,6 +214,20 @@
               <label><input type="radio" name="bg-shape" value="circle" checked>Border</label>
             </div>
           </div>
+          <div class="field">
+            <label>Fluff gap</label>
+            <div class="field-row">
+              <input type="range" id="gap" min="0" max="5" step="1" value="1">
+              <span class="range-value" id="gap-value">1</span>
+            </div>
+          </div>
+          <div class="field">
+            <label>Flank gap</label>
+            <div class="field-row">
+              <input type="range" id="flank-gap" min="0" max="5" step="1" value="1">
+              <span class="range-value" id="flank-gap-value">1</span>
+            </div>
+          </div>
           <div class="checkbox-row">
             <input type="checkbox" id="shuffle">
             <label for="shuffle">Shuffle fluff</label>
@@ -286,6 +300,10 @@
     const bgAlpha = document.getElementById("bg-alpha");
     const bgAlphaValue = document.getElementById("bg-alpha-value");
     const bgShapeRadios = document.querySelectorAll('input[name="bg-shape"]');
+    const gapInput = document.getElementById("gap");
+    const gapValue = document.getElementById("gap-value");
+    const flankGapInput = document.getElementById("flank-gap");
+    const flankGapValue = document.getElementById("flank-gap-value");
     const shuffleCheckbox = document.getElementById("shuffle");
     const colorful = document.getElementById("colorful");
     const previewSvg = document.getElementById("preview-svg");
@@ -348,7 +366,7 @@
       shape: "circle", cr: "0", snap: "0", ratio: "0.82", sw: "2",
       fg: "000000", fga: "1", bc: "000000", bca: "1",
       b2: "0", b2c: "ffffff", b2a: "1", b2w: "4", b2o: "0", b2t: "0",
-      bg: "ffffff", bga: "1", bgs: "circle", shuf: "0", dbg: "0",
+      bg: "ffffff", bga: "1", bgs: "circle", gap: "1", fgap: "1", shuf: "0", dbg: "0",
     };
 
     function saveToUrl() {
@@ -367,6 +385,7 @@
         b2w: border2Width.value, b2o: border2Offset.value, b2t: border2Trim.checked ? "1" : "0",
         bg: bgColor.value.slice(1), bga: bgAlpha.value,
         bgs: document.querySelector('input[name="bg-shape"]:checked').value,
+        gap: gapInput.value, fgap: flankGapInput.value,
         shuf: shuffleCheckbox.checked ? "1" : "0",
         dbg: colorful.checked ? "1" : "0",
       };
@@ -423,6 +442,8 @@
         const r = document.querySelector(`input[name="bg-shape"][value="${get("bgs")}"]`);
         if (r) r.checked = true;
       }
+      if (get("gap") != null) { gapInput.value = get("gap"); gapValue.textContent = get("gap"); }
+      if (get("fgap") != null) { flankGapInput.value = get("fgap"); flankGapValue.textContent = get("fgap"); }
       if (get("shuf") != null) shuffleCheckbox.checked = get("shuf") === "1";
       if (get("dbg") != null) colorful.checked = get("dbg") === "1";
     }
@@ -460,6 +481,8 @@
         border2Trim: border2Trim.checked,
         snapRadius: snapRadiusCheckbox.checked,
         shuffle: shuffleCheckbox.checked,
+        gap: parseInt(gapInput.value),
+        flankGap: parseInt(flankGapInput.value),
       });
 
       currentOutputSvg = result;
@@ -542,6 +565,14 @@
       redraw();
     });
     bgShapeRadios.forEach(r => r.addEventListener("change", redraw));
+    gapInput.addEventListener("input", () => {
+      gapValue.textContent = gapInput.value;
+      redraw();
+    });
+    flankGapInput.addEventListener("input", () => {
+      flankGapValue.textContent = flankGapInput.value;
+      redraw();
+    });
     shuffleCheckbox.addEventListener("change", redraw);
     colorful.addEventListener("change", redraw);
 

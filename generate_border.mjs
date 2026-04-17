@@ -5,10 +5,8 @@
 
 // --- Fixed constants ---
 const FINDER_ZONE = 8; // 7x7 finder pattern + 1 separator
-const GAP = 1;
-const FLANK_GAP = 1;
-const FLANK_INSET = 2 * FINDER_ZONE - FLANK_GAP; // 15
-const FLANK_INSET_NO_FINDER = -FLANK_GAP; // -1
+const DEFAULT_GAP = 1;
+const DEFAULT_FLANK_GAP = 1;
 
 // --- Circle / layout ---
 const CIRCLE_RATIO = 27 / 33; // default 0.81818
@@ -90,12 +88,6 @@ function flipHorizontal(squares, qrSize) {
   return result;
 }
 
-function rotate90(squares, qrSize) {
-  const result = new Set();
-  for (const k of squares) { const [c, r] = unkey(k); result.add(key(qrSize - 1 - r, c)); }
-  return result;
-}
-
 function shift(squares, dc, dr) {
   const result = new Set();
   for (const k of squares) { const [c, r] = unkey(k); result.add(key(c + dc, r + dr)); }
@@ -158,45 +150,45 @@ function makeFlankingV(center, qrSize, lowerInset, upperInset, reps = 1) {
 
 // --- Group builders ---
 
-function makeTopGroup(qr, layout, reps = 2, transform = null) {
-  const { qrSize, qrOrigin } = layout;
-  const yOff = qrOrigin - GAP - qrSize;
+function makeTopGroup(qr, layout, reps = 2) {
+  const { qrSize, qrOrigin, gap, flankInset } = layout;
+  const yOff = qrOrigin - gap - qrSize;
   const trimmed = trimEdges(qr, qrSize, { left: true, right: true });
-  const center = flipVertical(transform ? transform(trimmed, qrSize) : trimmed, qrSize);
-  const flanks = makeFlankingH(center, qrSize, FLANK_INSET, FLANK_INSET, reps);
+  const center = flipVertical(trimmed, qrSize);
+  const flanks = makeFlankingH(center, qrSize, flankInset, flankInset, reps);
   const result = [["top center", offsetToSvg(center, qrOrigin, yOff)]];
   for (const [side, sq] of flanks) result.push([`top ${side}`, offsetToSvg(sq, qrOrigin, yOff)]);
   return result.map(([l, s]) => [l, trimCornersDiagonal(s, layout, true)]);
 }
 
-function makeBottomGroup(qr, layout, transform = null) {
-  const { qrSize, qrOrigin } = layout;
-  const yOff = qrOrigin + qrSize + GAP;
+function makeBottomGroup(qr, layout) {
+  const { qrSize, qrOrigin, gap, flankInset, flankInsetNoFinder } = layout;
+  const yOff = qrOrigin + qrSize + gap;
   const trimmed = trimEdges(qr, qrSize, { left: true });
-  const center = flipVertical(transform ? transform(trimmed, qrSize) : trimmed, qrSize);
-  const flanks = makeFlankingH(center, qrSize, FLANK_INSET_NO_FINDER, FLANK_INSET);
+  const center = flipVertical(trimmed, qrSize);
+  const flanks = makeFlankingH(center, qrSize, flankInsetNoFinder, flankInset);
   const result = [["bottom center", offsetToSvg(center, qrOrigin, yOff)]];
   for (const [side, sq] of flanks) result.push([`bottom ${side}`, offsetToSvg(sq, qrOrigin, yOff)]);
   return result.map(([l, s]) => [l, trimCornersDiagonal(s, layout, true)]);
 }
 
-function makeLeftGroup(qr, layout, reps = 2, transform = null) {
-  const { qrSize, qrOrigin } = layout;
-  const xOff = qrOrigin - GAP - qrSize;
+function makeLeftGroup(qr, layout, reps = 2) {
+  const { qrSize, qrOrigin, gap, flankInset } = layout;
+  const xOff = qrOrigin - gap - qrSize;
   const trimmed = trimEdges(qr, qrSize, { top: true, bottom: true });
-  const center = flipHorizontal(transform ? transform(trimmed, qrSize) : trimmed, qrSize);
-  const flanks = makeFlankingV(center, qrSize, FLANK_INSET, FLANK_INSET, reps);
+  const center = flipHorizontal(trimmed, qrSize);
+  const flanks = makeFlankingV(center, qrSize, flankInset, flankInset, reps);
   const result = [["left center", offsetToSvg(center, xOff, qrOrigin)]];
   for (const [side, sq] of flanks) result.push([`left ${side}`, offsetToSvg(sq, xOff, qrOrigin)]);
   return result.map(([l, s]) => [l, trimCornersDiagonal(s, layout, false)]);
 }
 
-function makeRightGroup(qr, layout, transform = null) {
-  const { qrSize, qrOrigin } = layout;
-  const xOff = qrOrigin + qrSize + GAP;
+function makeRightGroup(qr, layout) {
+  const { qrSize, qrOrigin, gap, flankInset, flankInsetNoFinder } = layout;
+  const xOff = qrOrigin + qrSize + gap;
   const trimmed = trimEdges(qr, qrSize, { top: true });
-  const center = flipHorizontal(transform ? transform(trimmed, qrSize) : trimmed, qrSize);
-  const flanks = makeFlankingV(center, qrSize, FLANK_INSET_NO_FINDER, FLANK_INSET);
+  const center = flipHorizontal(trimmed, qrSize);
+  const flanks = makeFlankingV(center, qrSize, flankInsetNoFinder, flankInset);
   const result = [["right center", offsetToSvg(center, xOff, qrOrigin)]];
   for (const [side, sq] of flanks) result.push([`right ${side}`, offsetToSvg(sq, xOff, qrOrigin)]);
   return result.map(([l, s]) => [l, trimCornersDiagonal(s, layout, false)]);
@@ -310,9 +302,14 @@ export function generate(svgText, {
   border2Trim = false,
   snapRadius = false,
   shuffle = false,
+  gap = DEFAULT_GAP,
+  flankGap = DEFAULT_FLANK_GAP,
 } = {}) {
   const { squares: qr, qrSize } = parseQr(svgText);
   const layout = computeLayout(qrSize, circleRatio, strokeWidth, borderShape, cornerRadius, snapRadius);
+  layout.gap = gap;
+  layout.flankInset = 2 * FINDER_ZONE - flankGap;
+  layout.flankInsetNoFinder = -flankGap;
 
   const qrSvg = offsetToSvg(qr, layout.qrOrigin, layout.qrOrigin);
   const qrPath = squaresToPath(qrSvg);
@@ -431,6 +428,8 @@ async function cli() {
       "border2-trim": { type: "boolean", default: false },
       "snap-radius": { type: "boolean", default: false },
       "shuffle": { type: "boolean", default: false },
+      "gap": { type: "string", default: String(DEFAULT_GAP) },
+      "flank-gap": { type: "string", default: String(DEFAULT_FLANK_GAP) },
     },
   });
 
@@ -457,6 +456,8 @@ async function cli() {
     border2Trim: values["border2-trim"],
     snapRadius: values["snap-radius"],
     shuffle: values["shuffle"],
+    gap: parseInt(values["gap"]),
+    flankGap: parseInt(values["flank-gap"]),
   });
 
   writeFileSync(values.output, result);
