@@ -248,7 +248,7 @@ function borderShapeElement(layout, attrs, radiusOffset = 0) {
 }
 
 function generateSvg(qrPath, decorationPaths, layout, {
-  bgColor = "#ffffff", bgShape = "rect", fgColor = "#000000", borderColor = "#000000",
+  bgColor = "#ffffff", bgShape = "circle", fgColor = "#000000", borderColor = "#000000",
   border2Color = null, border2Width = 4, border2Offset = 0,
 } = {}) {
   const s = fmt(layout.svgSize);
@@ -293,7 +293,7 @@ export function generate(svgText, {
   circleRatio = CIRCLE_RATIO,
   strokeWidth = CIRCLE_STROKE_WIDTH,
   bgColor = "#ffffff",
-  bgShape = "rect",
+  bgShape = "circle",
   fgColor = "#000000",
   borderColor = "#000000",
   borderShape = "circle",
@@ -361,7 +361,7 @@ async function cli() {
       "circle-ratio": { type: "string", default: String(CIRCLE_RATIO) },
       "stroke-width": { type: "string", default: String(CIRCLE_STROKE_WIDTH) },
       "bg-color": { type: "string", default: "#ffffff" },
-      "bg-shape": { type: "string", default: "rect" },
+      "bg-shape": { type: "string", default: "circle" },
       "fg-color": { type: "string", default: "#000000" },
       "border-color": { type: "string", default: "#000000" },
       "border-shape": { type: "string", default: "circle" },
