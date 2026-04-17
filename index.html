@@ -133,6 +133,10 @@
               <span class="range-value" id="corner-radius-value">0</span>
             </div>
           </div>
+          <div class="checkbox-row">
+            <input type="checkbox" id="snap-radius">
+            <label for="snap-radius">Snap to integer radius</label>
+          </div>
           <div class="field">
             <label>Size ratio</label>
             <div class="field-row">
@@ -251,6 +255,7 @@
     const fileInput = document.getElementById("file-input");
     const borderShapeRadios = document.querySelectorAll('input[name="border-shape"]');
     const cornerRadiusField = document.getElementById("corner-radius-field");
+    const snapRadiusCheckbox = document.getElementById("snap-radius");
     const cornerRadius = document.getElementById("corner-radius");
     const cornerRadiusValue = document.getElementById("corner-radius-value");
     const circleRatio = document.getElementById("circle-ratio");
@@ -335,7 +340,7 @@
 
     const DEFAULTS = {
       t: "https://example.com", ecc: "low", vmin: "1", vmax: "40", mask: "-1", boost: "1",
-      shape: "circle", cr: "0", ratio: "0.82", sw: "2",
+      shape: "circle", cr: "0", snap: "0", ratio: "0.82", sw: "2",
       fg: "000000", fga: "1", bc: "000000", bca: "1",
       b2: "0", b2c: "ffffff", b2a: "1", b2w: "4", b2o: "0", b2t: "0",
       bg: "ffffff", bga: "1", bgs: "rect", dbg: "0",
@@ -348,7 +353,8 @@
         vmin: versionMin.value, vmax: versionMax.value, mask: maskInput.value,
         boost: boostEcc.checked ? "1" : "0",
         shape: document.querySelector('input[name="border-shape"]:checked').value,
-        cr: cornerRadius.value, ratio: circleRatio.value, sw: strokeWidth.value,
+        cr: cornerRadius.value, snap: snapRadiusCheckbox.checked ? "1" : "0",
+        ratio: circleRatio.value, sw: strokeWidth.value,
         fg: fgColor.value.slice(1), fga: fgAlpha.value,
         bc: borderColorInput.value.slice(1), bca: borderAlpha.value,
         b2: border2Enabled.checked ? "1" : "0",
@@ -388,6 +394,7 @@
       cornerRadiusField.style.display =
         document.querySelector('input[name="border-shape"]:checked').value === "square" ? "" : "none";
       if (get("cr") != null) { cornerRadius.value = get("cr"); cornerRadiusValue.textContent = parseFloat(get("cr")).toFixed(2); }
+      if (get("snap") != null) snapRadiusCheckbox.checked = get("snap") === "1";
       if (get("ratio") != null) { circleRatio.value = get("ratio"); circleRatioValue.textContent = parseFloat(get("ratio")).toFixed(2); }
       if (get("sw") != null) { strokeWidth.value = get("sw"); strokeWidthValue.textContent = get("sw"); }
 
@@ -444,6 +451,7 @@
         border2Width: parseFloat(border2Width.value),
         border2Offset: parseFloat(border2Offset.value),
         border2Trim: border2Trim.checked,
+        snapRadius: snapRadiusCheckbox.checked,
       });
 
       currentOutputSvg = result;
@@ -483,6 +491,7 @@
       cornerRadiusValue.textContent = parseFloat(cornerRadius.value).toFixed(2);
       redraw();
     });
+    snapRadiusCheckbox.addEventListener("change", redraw);
     circleRatio.addEventListener("input", () => {
       circleRatioValue.textContent = parseFloat(circleRatio.value).toFixed(2);
       redraw();

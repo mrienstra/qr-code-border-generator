@@ -43,8 +43,9 @@ export function parseQr(svgText) {
   return { squares, qrSize };
 }
 
-export function computeLayout(qrSize, circleRatio = CIRCLE_RATIO, strokeWidth = CIRCLE_STROKE_WIDTH, borderShape = "circle", cornerRadius = 0) {
-  const circleR = qrSize * circleRatio;
+export function computeLayout(qrSize, circleRatio = CIRCLE_RATIO, strokeWidth = CIRCLE_STROKE_WIDTH, borderShape = "circle", cornerRadius = 0, snapRadius = false) {
+  let circleR = qrSize * circleRatio;
+  if (snapRadius) circleR = Math.round(circleR);
   const svgSize = 2 * circleR + 2 * CIRCLE_MARGIN;
   const qrOrigin = (svgSize - qrSize) / 2;
   return {
@@ -301,9 +302,10 @@ export function generate(svgText, {
   border2Width = 4,
   border2Offset = 0,
   border2Trim = false,
+  snapRadius = false,
 } = {}) {
   const { squares: qr, qrSize } = parseQr(svgText);
-  const layout = computeLayout(qrSize, circleRatio, strokeWidth, borderShape, cornerRadius);
+  const layout = computeLayout(qrSize, circleRatio, strokeWidth, borderShape, cornerRadius, snapRadius);
 
   const qrSvg = offsetToSvg(qr, layout.qrOrigin, layout.qrOrigin);
   const qrPath = squaresToPath(qrSvg);
@@ -368,6 +370,7 @@ async function cli() {
       "border2-width": { type: "string", default: "4" },
       "border2-offset": { type: "string", default: "0" },
       "border2-trim": { type: "boolean", default: false },
+      "snap-radius": { type: "boolean", default: false },
     },
   });
 
@@ -392,6 +395,7 @@ async function cli() {
     border2Width: parseFloat(values["border2-width"]),
     border2Offset: parseFloat(values["border2-offset"]),
     border2Trim: values["border2-trim"],
+    snapRadius: values["snap-radius"],
   });
 
   writeFileSync(values.output, result);
