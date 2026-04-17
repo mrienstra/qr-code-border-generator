@@ -233,6 +233,10 @@
             <label for="shuffle">Shuffle fluff</label>
           </div>
           <div class="checkbox-row">
+            <input type="checkbox" id="rand-align">
+            <label for="rand-align">Randomize alignments</label>
+          </div>
+          <div class="checkbox-row">
             <input type="checkbox" id="colorful">
             <label for="colorful">Colorful (debug)</label>
           </div>
@@ -305,6 +309,7 @@
     const flankGapInput = document.getElementById("flank-gap");
     const flankGapValue = document.getElementById("flank-gap-value");
     const shuffleCheckbox = document.getElementById("shuffle");
+    const randAlignCheckbox = document.getElementById("rand-align");
     const colorful = document.getElementById("colorful");
     const previewSvg = document.getElementById("preview-svg");
     const statsEl = document.getElementById("stats");
@@ -366,7 +371,7 @@
       shape: "circle", cr: "0", snap: "0", ratio: "0.82", sw: "2",
       fg: "000000", fga: "1", bc: "000000", bca: "1",
       b2: "0", b2c: "ffffff", b2a: "1", b2w: "4", b2o: "0", b2t: "0",
-      bg: "ffffff", bga: "1", bgs: "circle", gap: "1", fgap: "1", shuf: "0", dbg: "0",
+      bg: "ffffff", bga: "1", bgs: "circle", gap: "1", fgap: "1", shuf: "0", ra: "0", dbg: "0",
     };
 
     function saveToUrl() {
@@ -387,6 +392,7 @@
         bgs: document.querySelector('input[name="bg-shape"]:checked').value,
         gap: gapInput.value, fgap: flankGapInput.value,
         shuf: shuffleCheckbox.checked ? "1" : "0",
+        ra: randAlignCheckbox.checked ? "1" : "0",
         dbg: colorful.checked ? "1" : "0",
       };
       const params = new URLSearchParams();
@@ -445,6 +451,7 @@
       if (get("gap") != null) { gapInput.value = get("gap"); gapValue.textContent = get("gap"); }
       if (get("fgap") != null) { flankGapInput.value = get("fgap"); flankGapValue.textContent = get("fgap"); }
       if (get("shuf") != null) shuffleCheckbox.checked = get("shuf") === "1";
+      if (get("ra") != null) randAlignCheckbox.checked = get("ra") === "1";
       if (get("dbg") != null) colorful.checked = get("dbg") === "1";
     }
 
@@ -483,6 +490,7 @@
         shuffle: shuffleCheckbox.checked,
         gap: parseInt(gapInput.value),
         flankGap: parseInt(flankGapInput.value),
+        randAlign: randAlignCheckbox.checked,
       });
 
       currentOutputSvg = result;
@@ -574,6 +582,7 @@
       redraw();
     });
     shuffleCheckbox.addEventListener("change", redraw);
+    randAlignCheckbox.addEventListener("change", redraw);
     colorful.addEventListener("change", redraw);
 
     // Download

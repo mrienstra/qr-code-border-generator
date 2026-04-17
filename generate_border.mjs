@@ -41,6 +41,46 @@ export function parseQr(svgText) {
   return { squares, qrSize };
 }
 
+// --- Alignment pattern helpers ---
+
+function getAlignmentPositions(version) {
+  if (version <= 1) return [];
+  const size = version * 4 + 17;
+  const numAlign = Math.floor(version / 7) + 2;
+  if (numAlign === 2) return [6, size - 7];
+  const last = size - 7;
+  const step = Math.ceil((last - 6) / (numAlign - 1) / 2) * 2;
+  const result = [6];
+  for (let pos = last; result.length < numAlign; pos -= step) {
+    result.splice(1, 0, pos);
+  }
+  return result;
+}
+
+function randomizeAlignmentPatterns(squares, qrSize) {
+  const version = (qrSize - 17) / 4;
+  const positions = getAlignmentPositions(version);
+  if (positions.length === 0) return squares;
+  const last = qrSize - 7;
+  const result = new Set(squares);
+  for (const row of positions) {
+    for (const col of positions) {
+      // Skip positions that overlap with finder patterns
+      if (row === 6 && col === 6) continue;
+      if (row === 6 && col === last) continue;
+      if (row === last && col === 6) continue;
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const k = key(col + dx, row + dy);
+          result.delete(k);
+          if (Math.random() < 0.5) result.add(k);
+        }
+      }
+    }
+  }
+  return result;
+}
+
 export function computeLayout(qrSize, circleRatio = CIRCLE_RATIO, strokeWidth = CIRCLE_STROKE_WIDTH, borderShape = "circle", cornerRadius = 0, snapRadius = false) {
   let circleR = qrSize * circleRatio;
   if (snapRadius) circleR = Math.round(circleR);
@@ -304,6 +344,7 @@ export function generate(svgText, {
   shuffle = false,
   gap = DEFAULT_GAP,
   flankGap = DEFAULT_FLANK_GAP,
+  randAlign = false,
 } = {}) {
   const { squares: qr, qrSize } = parseQr(svgText);
   const layout = computeLayout(qrSize, circleRatio, strokeWidth, borderShape, cornerRadius, snapRadius);
@@ -314,11 +355,13 @@ export function generate(svgText, {
   const qrSvg = offsetToSvg(qr, layout.qrOrigin, layout.qrOrigin);
   const qrPath = squaresToPath(qrSvg);
 
+  const fluffQr = randAlign ? randomizeAlignmentPatterns(qr, qrSize) : qr;
+
   const allGroups = [
-    ["top", makeTopGroup(qr, layout)],
-    ["bottom", makeBottomGroup(qr, layout)],
-    ["left", makeLeftGroup(qr, layout)],
-    ["right", makeRightGroup(qr, layout)],
+    ["top", makeTopGroup(fluffQr, layout)],
+    ["bottom", makeBottomGroup(fluffQr, layout)],
+    ["left", makeLeftGroup(fluffQr, layout)],
+    ["right", makeRightGroup(fluffQr, layout)],
   ];
 
   // Shuffle: swap center pieces across the diagonal (top↔left, bottom↔right)
@@ -430,6 +473,7 @@ async function cli() {
       "shuffle": { type: "boolean", default: false },
       "gap": { type: "string", default: String(DEFAULT_GAP) },
       "flank-gap": { type: "string", default: String(DEFAULT_FLANK_GAP) },
+      "rand-align": { type: "boolean", default: false },
     },
   });
 
@@ -458,6 +502,7 @@ async function cli() {
     shuffle: values["shuffle"],
     gap: parseInt(values["gap"]),
     flankGap: parseInt(values["flank-gap"]),
+    randAlign: values["rand-align"],
   });
 
   writeFileSync(values.output, result);
