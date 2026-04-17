@@ -88,6 +88,16 @@ def flip_vertical(squares: set[tuple[int, int]]) -> set[tuple[int, int]]:
     return {(c, QR_SIZE - 1 - r) for c, r in squares}
 
 
+def flip_horizontal(squares: set[tuple[int, int]]) -> set[tuple[int, int]]:
+    """Flip a set of grid coordinates horizontally."""
+    return {(QR_SIZE - 1 - c, r) for c, r in squares}
+
+
+def shift(squares: set[tuple[int, int]], dc: int, dr: int) -> set[tuple[int, int]]:
+    """Shift grid coordinates by (dc, dr)."""
+    return {(c + dc, r + dr) for c, r in squares}
+
+
 def offset_to_svg(
     squares: set[tuple[int, int]], x_offset: float, y_offset: float
 ) -> set[tuple[float, float]]:
@@ -95,15 +105,32 @@ def offset_to_svg(
     return {(x_offset + c, y_offset + r) for c, r in squares}
 
 
-def make_top_center(filtered: set[tuple[int, int]]) -> set[tuple[float, float]]:
-    """Create the top-center copy: vertically flipped, positioned above QR."""
-    flipped = flip_vertical(filtered)
-    # Position so that the bottom edge of the copy is GAP pixels above the QR top.
-    # Flipped row 32 (max) should have its bottom edge at QR_ORIGIN - GAP.
-    # So its y = QR_ORIGIN - GAP - 1. offset_y + 32 = QR_ORIGIN - GAP - 1.
-    # offset_y = QR_ORIGIN - GAP - 1 - 32 = QR_ORIGIN - GAP - QR_SIZE
-    y_offset = QR_ORIGIN - GAP - QR_SIZE
-    return offset_to_svg(flipped, QR_ORIGIN, y_offset)
+FINDER_ZONE = 8  # 7x7 finder pattern + 1 separator
+
+
+def make_top_center(filtered: set[tuple[int, int]]) -> set[tuple[int, int]]:
+    """Create the top-center copy: vertically flipped, in grid coordinates."""
+    return flip_vertical(filtered)
+
+
+def make_top_right(top_center: set[tuple[int, int]]) -> set[tuple[int, int]]:
+    """Create the top-right flanking copy: mirror center horizontally, shift right.
+
+    Shifted inward by FINDER_ZONE so it overlaps the gap left by the
+    removed top-right finder pattern.
+    """
+    mirrored = flip_horizontal(top_center)
+    return shift(mirrored, QR_SIZE - FINDER_ZONE, 0)
+
+
+def make_top_left(top_center: set[tuple[int, int]]) -> set[tuple[int, int]]:
+    """Create the top-left flanking copy: mirror center horizontally, shift left.
+
+    Shifted inward by FINDER_ZONE so it overlaps the gap left by the
+    removed top-left finder pattern.
+    """
+    mirrored = flip_horizontal(top_center)
+    return shift(mirrored, -(QR_SIZE - FINDER_ZONE), 0)
 
 
 def write_svg(qr_path: str, decoration_paths: list[tuple[str, str]], output: str):
@@ -123,6 +150,25 @@ def write_svg(qr_path: str, decoration_paths: list[tuple[str, str]], output: str
     print(f"\nWrote {output}")
 
 
+def make_top_group(filtered: set[tuple[int, int]]) -> list[tuple[str, set[tuple[float, float]]]]:
+    """Build the full top decoration group.
+
+    Returns list of (label, svg_squares) tuples.
+    """
+    # All top copies share the same y offset (above QR with GAP)
+    y_offset = QR_ORIGIN - GAP - QR_SIZE
+
+    top_center = make_top_center(filtered)
+    top_right = make_top_right(top_center)
+    top_left = make_top_left(top_center)
+
+    return [
+        ("top center", offset_to_svg(top_center, QR_ORIGIN, y_offset)),
+        ("top right", offset_to_svg(top_right, QR_ORIGIN, y_offset)),
+        ("top left", offset_to_svg(top_left, QR_ORIGIN, y_offset)),
+    ]
+
+
 def main():
     qr = parse_qr(INPUT_SVG)
     print(f"Parsed {len(qr)} squares from {INPUT_SVG}")
@@ -135,18 +181,16 @@ def main():
     qr_svg = offset_to_svg(qr, QR_ORIGIN, QR_ORIGIN)
     qr_path = squares_to_path(qr_svg)
 
-    # Top center copy
-    top_center = make_top_center(filtered)
-    top_center_path = squares_to_path(top_center)
-    print(f"Top center copy: {len(top_center)} squares")
-
-    # Print text grid for verification
-    print_grid(filtered, "Filtered QR (grid coords)")
-    flipped = flip_vertical(filtered)
-    print_grid(flipped, "Flipped vertically (grid coords)")
+    # Top group
+    top_group = make_top_group(filtered)
+    decoration_paths = []
+    for label, svg_squares in top_group:
+        path_d = squares_to_path(svg_squares)
+        print(f"{label}: {len(svg_squares)} squares")
+        decoration_paths.append((label, path_d))
 
     # Write SVG
-    write_svg(qr_path, [("top center", top_center_path)], OUTPUT_SVG)
+    write_svg(qr_path, decoration_paths, OUTPUT_SVG)
 
 
 if __name__ == "__main__":
