@@ -61,6 +61,10 @@ function randomizeAlignmentPatterns(squares, qrSize) {
   const version = (qrSize - 17) / 4;
   const positions = getAlignmentPositions(version);
   if (positions.length === 0) return squares;
+  // Deterministic PRNG seeded from QR data
+  let seed = 0;
+  for (const k of squares) { const [c, r] = unkey(k); seed = (seed * 31 + c * 997 + r) >>> 0; }
+  const rand = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t ^= t + Math.imul(t ^ t >>> 7, 61 | t); return ((t ^ t >>> 14) >>> 0) / 4294967296; };
   const last = qrSize - 7;
   const result = new Set(squares);
   for (const row of positions) {
@@ -73,7 +77,7 @@ function randomizeAlignmentPatterns(squares, qrSize) {
         for (let dx = -2; dx <= 2; dx++) {
           const k = key(col + dx, row + dy);
           result.delete(k);
-          if (Math.random() < 0.5) result.add(k);
+          if (rand() < 0.5) result.add(k);
         }
       }
     }
