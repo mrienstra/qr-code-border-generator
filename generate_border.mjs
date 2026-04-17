@@ -147,6 +147,7 @@ function offsetToSvg(squares, xOff, yOff) {
 function trimCornersDiagonal(squares, layout, trimDxGeDy) {
   const qo = layout.qrOrigin;
   const qe = qo + layout.qrSize;
+  const fill = layout.fillDiagonal;
   const result = new Set();
   for (const k of squares) {
     const [x, y] = unkey(k);
@@ -156,8 +157,16 @@ function trimCornersDiagonal(squares, layout, trimDxGeDy) {
     else if (x < qo && y >= qe) { dx = qo - x; dy = y - qe + 1; }
     else if (x >= qe && y >= qe) { dx = x - qe + 1; dy = y - qe + 1; }
     if (dx !== null) {
-      if (trimDxGeDy && dx >= dy) continue;
-      if (!trimDxGeDy && dy >= dx) continue;
+      if (dx === dy) {
+        if (!fill) continue;
+        // Alternate along diagonal: even → horizontal, odd → vertical
+        const horizKeeps = (Math.round(dx) % 2 === 0);
+        if (trimDxGeDy && !horizKeeps) continue;
+        if (!trimDxGeDy && horizKeeps) continue;
+      } else {
+        if (trimDxGeDy && dx > dy) continue;
+        if (!trimDxGeDy && dy > dx) continue;
+      }
     }
     result.add(k);
   }
@@ -355,6 +364,7 @@ export function generate(svgText, {
   layout.gap = gap;
   layout.flankInset = 2 * FINDER_ZONE - flankGap;
   layout.flankInsetNoFinder = -flankGap;
+  layout.fillDiagonal = (flankGap === 0);
 
   const qrSvg = offsetToSvg(qr, layout.qrOrigin, layout.qrOrigin);
   const qrPath = squaresToPath(qrSvg);
