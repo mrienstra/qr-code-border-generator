@@ -62,26 +62,23 @@ def compute_layout(qr_size: int) -> dict:
     }
 
 
-def finder_pattern_zones(qr_size: int) -> set[tuple[int, int]]:
-    """Return the set of (col, row) cells covered by the 3 finder patterns.
-
-    Each finder pattern is 7x7, plus a 1-cell separator on the inner sides.
-    We exclude an 8x8 block for each corner (the separator row/col).
-    """
-    zones = set()
-    # Top-left: cols 0-7, rows 0-7
-    for c in range(8):
-        for r in range(8):
-            zones.add((c, r))
-    # Top-right: cols (qr_size-8)...(qr_size-1), rows 0-7
-    for c in range(qr_size - 8, qr_size):
-        for r in range(8):
-            zones.add((c, r))
-    # Bottom-left: cols 0-7, rows (qr_size-8)...(qr_size-1)
-    for c in range(8):
-        for r in range(qr_size - 8, qr_size):
-            zones.add((c, r))
-    return zones
+def trim_edges(
+    squares: set[tuple[int, int]],
+    qr_size: int,
+    left: bool = False,
+    right: bool = False,
+    top: bool = False,
+    bottom: bool = False,
+) -> set[tuple[int, int]]:
+    """Remove cells along specified edges (FINDER_ZONE pixels deep)."""
+    return {
+        (c, r)
+        for c, r in squares
+        if not (left and c < FINDER_ZONE)
+        and not (right and c >= qr_size - FINDER_ZONE)
+        and not (top and r < FINDER_ZONE)
+        and not (bottom and r >= qr_size - FINDER_ZONE)
+    }
 
 
 def squares_to_path(squares: set[tuple[float, float]]) -> str:
@@ -165,11 +162,12 @@ def make_flanking_v(
     return results
 
 
-def make_top_group(filtered, layout, reps=2):
+def make_top_group(qr, layout, reps=2):
     qr_size, qr_origin = layout["qr_size"], layout["qr_origin"]
     y_offset = qr_origin - GAP - qr_size
 
-    center = flip_vertical(filtered, qr_size)
+    trimmed = trim_edges(qr, qr_size, left=True, right=True)
+    center = flip_vertical(trimmed, qr_size)
     flanks = make_flanking_h(center, qr_size, FLANK_INSET, FLANK_INSET, reps=reps)
 
     result = [("top center", offset_to_svg(center, qr_origin, y_offset))]
@@ -178,11 +176,12 @@ def make_top_group(filtered, layout, reps=2):
     return result
 
 
-def make_bottom_group(filtered, layout):
+def make_bottom_group(qr, layout):
     qr_size, qr_origin = layout["qr_size"], layout["qr_origin"]
     y_offset = qr_origin + qr_size + GAP
 
-    center = flip_vertical(filtered, qr_size)
+    trimmed = trim_edges(qr, qr_size, left=True)
+    center = flip_vertical(trimmed, qr_size)
     flanks = make_flanking_h(center, qr_size, FLANK_INSET_NO_FINDER, FLANK_INSET)
 
     result = [("bottom center", offset_to_svg(center, qr_origin, y_offset))]
@@ -191,11 +190,12 @@ def make_bottom_group(filtered, layout):
     return result
 
 
-def make_left_group(filtered, layout, reps=2):
+def make_left_group(qr, layout, reps=2):
     qr_size, qr_origin = layout["qr_size"], layout["qr_origin"]
     x_offset = qr_origin - GAP - qr_size
 
-    center = flip_horizontal(filtered, qr_size)
+    trimmed = trim_edges(qr, qr_size, top=True, bottom=True)
+    center = flip_horizontal(trimmed, qr_size)
     flanks = make_flanking_v(center, qr_size, FLANK_INSET, FLANK_INSET, reps=reps)
 
     result = [("left center", offset_to_svg(center, x_offset, qr_origin))]
@@ -204,11 +204,12 @@ def make_left_group(filtered, layout, reps=2):
     return result
 
 
-def make_right_group(filtered, layout):
+def make_right_group(qr, layout):
     qr_size, qr_origin = layout["qr_size"], layout["qr_origin"]
     x_offset = qr_origin + qr_size + GAP
 
-    center = flip_horizontal(filtered, qr_size)
+    trimmed = trim_edges(qr, qr_size, top=True)
+    center = flip_horizontal(trimmed, qr_size)
     flanks = make_flanking_v(center, qr_size, FLANK_INSET_NO_FINDER, FLANK_INSET)
 
     result = [("right center", offset_to_svg(center, x_offset, qr_origin))]
@@ -295,19 +296,15 @@ def main():
         f"circle r={layout['circle_r']}"
     )
 
-    zones = finder_pattern_zones(qr_size)
-    filtered = qr - zones
-    print(f"Filtered: {len(filtered)} squares (removed {len(qr) - len(filtered)} in finder zones)")
-
     # Original QR code path (in SVG coordinates)
     qr_svg = offset_to_svg(qr, layout["qr_origin"], layout["qr_origin"])
     qr_path = squares_to_path(qr_svg)
 
     all_groups = [
-        ("top", make_top_group(filtered, layout)),
-        ("bottom", make_bottom_group(filtered, layout)),
-        ("left", make_left_group(filtered, layout)),
-        ("right", make_right_group(filtered, layout)),
+        ("top", make_top_group(qr, layout)),
+        ("bottom", make_bottom_group(qr, layout)),
+        ("left", make_left_group(qr, layout)),
+        ("right", make_right_group(qr, layout)),
     ]
 
     decoration_paths = []
