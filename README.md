@@ -3,7 +3,7 @@
 Generates decorative borders around QR codes by mirroring the code's own data pattern, clipped to a circle or rounded square.
 
 <p align="center">
-  <img src="qr-code-generated.svg" alt="Example QR code with circular border" width="400">
+  <img src="example-qr-code.svg" alt="Example QR code with circular border" width="400">
 </p>
 
 **[Try it live](https://mrienstra.github.io/qr-code-border-generator/)**
