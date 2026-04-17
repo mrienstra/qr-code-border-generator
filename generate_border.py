@@ -12,6 +12,11 @@ FLANK_GAP = 1  # gap between orthogonal copies and flanking copies
 FLANK_INSET = 2 * FINDER_ZONE - FLANK_GAP  # both corners have finders (15)
 FLANK_INSET_NO_FINDER = -FLANK_GAP  # adjacent corner has no finder (-1)
 
+# --- Circle / layout ---
+CIRCLE_RATIO = 27 / 33  # circle radius as a proportion of QR size
+CIRCLE_MARGIN = 3  # space between circle edge and viewBox edge
+CIRCLE_STROKE_WIDTH = 2
+
 
 def parse_qr(svg_path: str) -> tuple[set[tuple[int, int]], int]:
     """Parse QR code SVG and return (squares, qr_size).
@@ -44,9 +49,9 @@ def parse_qr(svg_path: str) -> tuple[set[tuple[int, int]], int]:
 
 def compute_layout(qr_size: int) -> dict:
     """Compute SVG layout values from QR size."""
-    svg_size = qr_size + 27  # consistent margin
-    qr_origin = (svg_size - qr_size) / 2  # always x.5
-    circle_r = (qr_size + 21) / 2  # proportional radius
+    circle_r = qr_size * CIRCLE_RATIO
+    svg_size = 2 * circle_r + 2 * CIRCLE_MARGIN
+    qr_origin = (svg_size - qr_size) / 2
     return {
         "qr_size": qr_size,
         "svg_size": svg_size,
@@ -196,14 +201,21 @@ def make_right_group(filtered, layout):
     ]
 
 
+def fmt(v: float) -> str:
+    """Format a number for SVG: drop trailing zeros, use int if whole."""
+    if v == int(v):
+        return str(int(v))
+    return f"{v:g}"
+
+
 def write_svg(
     qr_path: str,
     decoration_paths: list[tuple[str, str, str]],
     layout: dict,
     output: str,
 ):
-    svg_size = layout["svg_size"]
-    cx, cy, r = layout["circle_cx"], layout["circle_cy"], layout["circle_r"]
+    svg_size = fmt(layout["svg_size"])
+    cx, cy, r = fmt(layout["circle_cx"]), fmt(layout["circle_cy"]), fmt(layout["circle_r"])
     lines = [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {svg_size} {svg_size}">',
         '  <rect width="100%" height="100%" fill="#ffffff"/>',
@@ -221,7 +233,7 @@ def write_svg(
     lines.append("  </g>")
     lines.append(
         f'  <circle cx="{cx}" cy="{cy}" r="{r}"'
-        f' fill="none" stroke="#000000" stroke-width="2"/>'
+        f' fill="none" stroke="#000000" stroke-width="{CIRCLE_STROKE_WIDTH}"/>'
     )
     lines.append("</svg>")
 
