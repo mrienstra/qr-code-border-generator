@@ -106,6 +106,7 @@ def offset_to_svg(
 
 
 FINDER_ZONE = 8  # 7x7 finder pattern + 1 separator
+FLANK_INSET = 15  # how far inward to shift flanking copies (8 + 7)
 
 
 def make_top_center(filtered: set[tuple[int, int]]) -> set[tuple[int, int]]:
@@ -120,29 +121,36 @@ def make_top_right(top_center: set[tuple[int, int]]) -> set[tuple[int, int]]:
     removed top-right finder pattern.
     """
     mirrored = flip_horizontal(top_center)
-    return shift(mirrored, QR_SIZE - FINDER_ZONE, 0)
+    return shift(mirrored, QR_SIZE - FLANK_INSET, 0)
 
 
 def make_top_left(top_center: set[tuple[int, int]]) -> set[tuple[int, int]]:
     """Create the top-left flanking copy: mirror center horizontally, shift left.
 
-    Shifted inward by FINDER_ZONE so it overlaps the gap left by the
+    Shifted inward by FLANK_INSET so it overlaps the gap left by the
     removed top-left finder pattern.
     """
     mirrored = flip_horizontal(top_center)
-    return shift(mirrored, -(QR_SIZE - FINDER_ZONE), 0)
+    return shift(mirrored, -(QR_SIZE - FLANK_INSET), 0)
 
 
-def write_svg(qr_path: str, decoration_paths: list[tuple[str, str]], output: str):
-    """Write an SVG file with the QR code and decoration paths."""
+def write_svg(
+    qr_path: str,
+    decoration_paths: list[tuple[str, str, str]],
+    output: str,
+):
+    """Write an SVG file with the QR code and decoration paths.
+
+    decoration_paths: list of (label, path_d, fill_color) tuples.
+    """
     lines = [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {SVG_SIZE} {SVG_SIZE}">',
         '  <rect width="100%" height="100%" fill="#ffffff"/>',
         f'  <path d="{qr_path}"/>',
     ]
-    for label, path_d in decoration_paths:
+    for label, path_d, color in decoration_paths:
         lines.append(f'  <!-- {label} -->')
-        lines.append(f'  <path d="{path_d}" fill="#888888"/>')
+        lines.append(f'  <path d="{path_d}" fill="{color}"/>')
     lines.append("</svg>")
 
     with open(output, "w") as f:
@@ -183,11 +191,12 @@ def main():
 
     # Top group
     top_group = make_top_group(filtered)
+    colors = ["#888888", "#cc4444", "#4444cc"]  # center=gray, right=red, left=blue
     decoration_paths = []
-    for label, svg_squares in top_group:
+    for (label, svg_squares), color in zip(top_group, colors):
         path_d = squares_to_path(svg_squares)
         print(f"{label}: {len(svg_squares)} squares")
-        decoration_paths.append((label, path_d))
+        decoration_paths.append((label, path_d, color))
 
     # Write SVG
     write_svg(qr_path, decoration_paths, OUTPUT_SVG)
