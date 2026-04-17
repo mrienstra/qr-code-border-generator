@@ -204,7 +204,9 @@ function fmt(v) {
   return s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s;
 }
 
-function generateSvg(qrPath, decorationPaths, layout, bgColor = "#ffffff", bgShape = "rect") {
+function generateSvg(qrPath, decorationPaths, layout, {
+  bgColor = "#ffffff", bgShape = "rect", fgColor = "#000000", borderColor = "#000000",
+} = {}) {
   const s = fmt(layout.svgSize);
   const cx = fmt(layout.circleCx), cy = fmt(layout.circleCy), r = fmt(layout.circleR);
   const lines = [
@@ -222,7 +224,7 @@ function generateSvg(qrPath, decorationPaths, layout, bgColor = "#ffffff", bgSha
     `    </clipPath>`,
     `  </defs>`,
     `  <g clip-path="url(#circle-clip)">`,
-    `    <path d="${qrPath}"/>`,
+    `    <path d="${qrPath}" fill="${fgColor}"/>`,
   );
   for (const [label, pathD, color] of decorationPaths) {
     lines.push(`    <!-- ${label} -->`);
@@ -231,7 +233,7 @@ function generateSvg(qrPath, decorationPaths, layout, bgColor = "#ffffff", bgSha
   lines.push(`  </g>`);
   lines.push(
     `  <circle cx="${cx}" cy="${cy}" r="${r}"` +
-    ` fill="none" stroke="#000000" stroke-width="${fmt(layout.strokeWidth)}"/>`
+    ` fill="none" stroke="${borderColor}" stroke-width="${fmt(layout.strokeWidth)}"/>`
   );
   lines.push(`</svg>`);
   return lines.join("\n");
@@ -245,6 +247,8 @@ export function generate(svgText, {
   strokeWidth = CIRCLE_STROKE_WIDTH,
   bgColor = "#ffffff",
   bgShape = "rect",
+  fgColor = "#000000",
+  borderColor = "#000000",
 } = {}) {
   const { squares: qr, qrSize } = parseQr(svgText);
   const layout = computeLayout(qrSize, circleRatio, strokeWidth);
@@ -264,12 +268,12 @@ export function generate(svgText, {
     const palette = colorful ? DEBUG_PALETTE[groupName] : null;
     for (let i = 0; i < group.length; i++) {
       const [label, svgSquares] = group[i];
-      const color = palette ? palette[i % palette.length] : "#000000";
+      const color = palette ? palette[i % palette.length] : fgColor;
       decorationPaths.push([label, squaresToPath(svgSquares), color]);
     }
   }
 
-  return generateSvg(qrPath, decorationPaths, layout, bgColor, bgShape);
+  return generateSvg(qrPath, decorationPaths, layout, { bgColor, bgShape, fgColor, borderColor });
 }
 
 // --- Node CLI ---
@@ -287,6 +291,8 @@ async function cli() {
       "stroke-width": { type: "string", default: String(CIRCLE_STROKE_WIDTH) },
       "bg-color": { type: "string", default: "#ffffff" },
       "bg-shape": { type: "string", default: "rect" },
+      "fg-color": { type: "string", default: "#000000" },
+      "border-color": { type: "string", default: "#000000" },
     },
   });
 
@@ -303,6 +309,8 @@ async function cli() {
     strokeWidth: parseFloat(values["stroke-width"]),
     bgColor: values["bg-color"],
     bgShape: values["bg-shape"],
+    fgColor: values["fg-color"],
+    borderColor: values["border-color"],
   });
 
   writeFileSync(values.output, result);

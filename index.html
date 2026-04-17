@@ -134,6 +134,18 @@
             </div>
           </div>
           <div class="field">
+            <label>Interior color</label>
+            <div class="field-row">
+              <input type="color" id="fg-color" value="#000000" style="width:2.5em;height:2em;padding:0;border:1px solid #ccc;border-radius:4px;">
+            </div>
+          </div>
+          <div class="field">
+            <label>Border color</label>
+            <div class="field-row">
+              <input type="color" id="border-color" value="#000000" style="width:2.5em;height:2em;padding:0;border:1px solid #ccc;border-radius:4px;">
+            </div>
+          </div>
+          <div class="field">
             <label>Background color</label>
             <div class="field-row">
               <input type="color" id="bg-color" value="#ffffff" style="width:2.5em;height:2em;padding:0;border:1px solid #ccc;border-radius:4px;">
@@ -191,6 +203,8 @@
     const circleRatioValue = document.getElementById("circle-ratio-value");
     const strokeWidth = document.getElementById("stroke-width");
     const strokeWidthValue = document.getElementById("stroke-width-value");
+    const fgColor = document.getElementById("fg-color");
+    const borderColorInput = document.getElementById("border-color");
     const bgColor = document.getElementById("bg-color");
     const bgAlpha = document.getElementById("bg-alpha");
     const bgAlphaValue = document.getElementById("bg-alpha-value");
@@ -277,6 +291,8 @@
         strokeWidth: parseFloat(strokeWidth.value),
         bgColor: bg,
         bgShape: document.querySelector('input[name="bg-shape"]:checked').value,
+        fgColor: fgColor.value,
+        borderColor: borderColorInput.value,
       });
 
       currentOutputSvg = result;
@@ -314,6 +330,8 @@
       strokeWidthValue.textContent = parseFloat(strokeWidth.value).toFixed(strokeWidth.value % 1 ? 2 : 0);
       redraw();
     });
+    fgColor.addEventListener("input", redraw);
+    borderColorInput.addEventListener("input", redraw);
     bgColor.addEventListener("input", redraw);
     bgAlpha.addEventListener("input", () => {
       bgAlphaValue.textContent = parseFloat(bgAlpha.value).toFixed(2);
