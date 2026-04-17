@@ -118,45 +118,64 @@ def offset_to_svg(
 
 
 def make_flanking_h(
-    center: set[tuple[int, int]], qr_size: int, right_inset: int, left_inset: int
+    center: set[tuple[int, int]],
+    qr_size: int,
+    right_inset: int,
+    left_inset: int,
+    reps: int = 1,
 ):
     """Create left and right flanking copies from a center copy.
 
     Each flanking copy is the center mirrored horizontally, then shifted left/right.
+    With reps > 1, additional copies are placed further out at multiples of the shift.
     Used by top/bottom groups.
     """
     mirrored = flip_horizontal(center, qr_size)
-    right = shift(mirrored, qr_size - right_inset, 0)
-    left = shift(mirrored, -(qr_size - left_inset), 0)
-    return left, right
+    right_step = qr_size - right_inset
+    left_step = qr_size - left_inset
+    results = []
+    for i in range(1, reps + 1):
+        copy = mirrored if i % 2 == 1 else center
+        results.append(("left", shift(copy, -left_step * i, 0)))
+        results.append(("right", shift(copy, right_step * i, 0)))
+    return results
 
 
 def make_flanking_v(
-    center: set[tuple[int, int]], qr_size: int, lower_inset: int, upper_inset: int
+    center: set[tuple[int, int]],
+    qr_size: int,
+    lower_inset: int,
+    upper_inset: int,
+    reps: int = 1,
 ):
     """Create upper and lower flanking copies from a center copy.
 
     Each flanking copy is the center mirrored vertically, then shifted up/down.
+    With reps > 1, additional copies are placed further out at multiples of the shift.
     Used by left/right groups.
     """
     mirrored = flip_vertical(center, qr_size)
-    upper = shift(mirrored, 0, -(qr_size - upper_inset))
-    lower = shift(mirrored, 0, qr_size - lower_inset)
-    return upper, lower
+    upper_step = qr_size - upper_inset
+    lower_step = qr_size - lower_inset
+    results = []
+    for i in range(1, reps + 1):
+        copy = mirrored if i % 2 == 1 else center
+        results.append(("upper", shift(copy, 0, -upper_step * i)))
+        results.append(("lower", shift(copy, 0, lower_step * i)))
+    return results
 
 
-def make_top_group(filtered, layout):
+def make_top_group(filtered, layout, reps=2):
     qr_size, qr_origin = layout["qr_size"], layout["qr_origin"]
     y_offset = qr_origin - GAP - qr_size
 
     center = flip_vertical(filtered, qr_size)
-    left, right = make_flanking_h(center, qr_size, FLANK_INSET, FLANK_INSET)
+    flanks = make_flanking_h(center, qr_size, FLANK_INSET, FLANK_INSET, reps=reps)
 
-    return [
-        ("top center", offset_to_svg(center, qr_origin, y_offset)),
-        ("top right", offset_to_svg(right, qr_origin, y_offset)),
-        ("top left", offset_to_svg(left, qr_origin, y_offset)),
-    ]
+    result = [("top center", offset_to_svg(center, qr_origin, y_offset))]
+    for side, squares in flanks:
+        result.append((f"top {side}", offset_to_svg(squares, qr_origin, y_offset)))
+    return result
 
 
 def make_bottom_group(filtered, layout):
@@ -164,27 +183,25 @@ def make_bottom_group(filtered, layout):
     y_offset = qr_origin + qr_size + GAP
 
     center = flip_vertical(filtered, qr_size)
-    left, right = make_flanking_h(center, qr_size, FLANK_INSET_NO_FINDER, FLANK_INSET)
+    flanks = make_flanking_h(center, qr_size, FLANK_INSET_NO_FINDER, FLANK_INSET)
 
-    return [
-        ("bottom center", offset_to_svg(center, qr_origin, y_offset)),
-        ("bottom right", offset_to_svg(right, qr_origin, y_offset)),
-        ("bottom left", offset_to_svg(left, qr_origin, y_offset)),
-    ]
+    result = [("bottom center", offset_to_svg(center, qr_origin, y_offset))]
+    for side, squares in flanks:
+        result.append((f"bottom {side}", offset_to_svg(squares, qr_origin, y_offset)))
+    return result
 
 
-def make_left_group(filtered, layout):
+def make_left_group(filtered, layout, reps=2):
     qr_size, qr_origin = layout["qr_size"], layout["qr_origin"]
     x_offset = qr_origin - GAP - qr_size
 
     center = flip_horizontal(filtered, qr_size)
-    upper, lower = make_flanking_v(center, qr_size, FLANK_INSET, FLANK_INSET)
+    flanks = make_flanking_v(center, qr_size, FLANK_INSET, FLANK_INSET, reps=reps)
 
-    return [
-        ("left center", offset_to_svg(center, x_offset, qr_origin)),
-        ("left upper", offset_to_svg(upper, x_offset, qr_origin)),
-        ("left lower", offset_to_svg(lower, x_offset, qr_origin)),
-    ]
+    result = [("left center", offset_to_svg(center, x_offset, qr_origin))]
+    for side, squares in flanks:
+        result.append((f"left {side}", offset_to_svg(squares, x_offset, qr_origin)))
+    return result
 
 
 def make_right_group(filtered, layout):
@@ -192,13 +209,12 @@ def make_right_group(filtered, layout):
     x_offset = qr_origin + qr_size + GAP
 
     center = flip_horizontal(filtered, qr_size)
-    upper, lower = make_flanking_v(center, qr_size, FLANK_INSET_NO_FINDER, FLANK_INSET)
+    flanks = make_flanking_v(center, qr_size, FLANK_INSET_NO_FINDER, FLANK_INSET)
 
-    return [
-        ("right center", offset_to_svg(center, x_offset, qr_origin)),
-        ("right upper", offset_to_svg(upper, x_offset, qr_origin)),
-        ("right lower", offset_to_svg(lower, x_offset, qr_origin)),
-    ]
+    result = [("right center", offset_to_svg(center, x_offset, qr_origin))]
+    for side, squares in flanks:
+        result.append((f"right {side}", offset_to_svg(squares, x_offset, qr_origin)))
+    return result
 
 
 def fmt(v: float) -> str:
@@ -242,11 +258,12 @@ def write_svg(
     print(f"\nWrote {output}")
 
 
-DEBUG_COLORS = {
-    "top": ["#888888", "#cc4444", "#4444cc"],
-    "bottom": ["#aaaaaa", "#ee8888", "#8888ee"],
-    "left": ["#888888", "#cc4444", "#4444cc"],
-    "right": ["#aaaaaa", "#ee8888", "#8888ee"],
+# Cycle through these for debug coloring: center, then alternating flanks
+DEBUG_PALETTE = {
+    "top": ["#888888", "#cc4444", "#4444cc", "#cc8844", "#4488cc"],
+    "bottom": ["#aaaaaa", "#ee8888", "#8888ee", "#eeaa88", "#88aaee"],
+    "left": ["#888888", "#cc4444", "#4444cc", "#cc8844", "#4488cc"],
+    "right": ["#aaaaaa", "#ee8888", "#8888ee", "#eeaa88", "#88aaee"],
 }
 
 
@@ -295,8 +312,9 @@ def main():
 
     decoration_paths = []
     for group_name, group in all_groups:
-        colors = DEBUG_COLORS[group_name] if args.colorful else ["#000000"] * 3
-        for (label, svg_squares), color in zip(group, colors):
+        palette = DEBUG_PALETTE[group_name] if args.colorful else None
+        for i, (label, svg_squares) in enumerate(group):
+            color = palette[i % len(palette)] if palette else "#000000"
             path_d = squares_to_path(svg_squares)
             print(f"{label}: {len(svg_squares)} squares")
             decoration_paths.append((label, path_d, color))
