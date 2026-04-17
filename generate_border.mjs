@@ -43,7 +43,7 @@ export function parseQr(svgText) {
   return { squares, qrSize };
 }
 
-export function computeLayout(qrSize, circleRatio = CIRCLE_RATIO, strokeWidth = CIRCLE_STROKE_WIDTH) {
+export function computeLayout(qrSize, circleRatio = CIRCLE_RATIO, strokeWidth = CIRCLE_STROKE_WIDTH, borderShape = "circle", cornerRadius = 0) {
   const circleR = qrSize * circleRatio;
   const svgSize = 2 * circleR + 2 * CIRCLE_MARGIN;
   const qrOrigin = (svgSize - qrSize) / 2;
@@ -51,7 +51,7 @@ export function computeLayout(qrSize, circleRatio = CIRCLE_RATIO, strokeWidth = 
     qrSize, svgSize, qrOrigin,
     circleCx: svgSize / 2,
     circleCy: svgSize / 2,
-    circleR, strokeWidth,
+    circleR, strokeWidth, borderShape, cornerRadius,
   };
 }
 
@@ -204,26 +204,38 @@ function fmt(v) {
   return s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s;
 }
 
+function borderShapeElement(layout, attrs) {
+  const cx = fmt(layout.circleCx), cy = fmt(layout.circleCy), r = fmt(layout.circleR);
+  const attrStr = attrs ? " " + attrs : "";
+  if (layout.borderShape === "square") {
+    const x = fmt(layout.circleCx - layout.circleR);
+    const y = fmt(layout.circleCy - layout.circleR);
+    const side = fmt(2 * layout.circleR);
+    const rx = fmt(layout.cornerRadius * layout.circleR);
+    return `<rect x="${x}" y="${y}" width="${side}" height="${side}" rx="${rx}" ry="${rx}"${attrStr}/>`;
+  }
+  return `<circle cx="${cx}" cy="${cy}" r="${r}"${attrStr}/>`;
+}
+
 function generateSvg(qrPath, decorationPaths, layout, {
   bgColor = "#ffffff", bgShape = "rect", fgColor = "#000000", borderColor = "#000000",
 } = {}) {
   const s = fmt(layout.svgSize);
-  const cx = fmt(layout.circleCx), cy = fmt(layout.circleCy), r = fmt(layout.circleR);
   const lines = [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${s} ${s}">`,
   ];
   if (bgShape === "circle") {
-    lines.push(`  <circle cx="${cx}" cy="${cy}" r="${r}" fill="${bgColor}"/>`);
+    lines.push(`  ${borderShapeElement(layout, `fill="${bgColor}"`)}`);
   } else {
     lines.push(`  <rect width="100%" height="100%" fill="${bgColor}"/>`);
   }
   lines.push(
     `  <defs>`,
-    `    <clipPath id="circle-clip">`,
-    `      <circle cx="${cx}" cy="${cy}" r="${r}"/>`,
+    `    <clipPath id="border-clip">`,
+    `      ${borderShapeElement(layout, "")}`,
     `    </clipPath>`,
     `  </defs>`,
-    `  <g clip-path="url(#circle-clip)">`,
+    `  <g clip-path="url(#border-clip)">`,
     `    <path d="${qrPath}" fill="${fgColor}"/>`,
   );
   for (const [label, pathD, color] of decorationPaths) {
@@ -232,8 +244,7 @@ function generateSvg(qrPath, decorationPaths, layout, {
   }
   lines.push(`  </g>`);
   lines.push(
-    `  <circle cx="${cx}" cy="${cy}" r="${r}"` +
-    ` fill="none" stroke="${borderColor}" stroke-width="${fmt(layout.strokeWidth)}"/>`
+    `  ${borderShapeElement(layout, `fill="none" stroke="${borderColor}" stroke-width="${fmt(layout.strokeWidth)}"`)}`
   );
   lines.push(`</svg>`);
   return lines.join("\n");
@@ -249,9 +260,11 @@ export function generate(svgText, {
   bgShape = "rect",
   fgColor = "#000000",
   borderColor = "#000000",
+  borderShape = "circle",
+  cornerRadius = 0,
 } = {}) {
   const { squares: qr, qrSize } = parseQr(svgText);
-  const layout = computeLayout(qrSize, circleRatio, strokeWidth);
+  const layout = computeLayout(qrSize, circleRatio, strokeWidth, borderShape, cornerRadius);
 
   const qrSvg = offsetToSvg(qr, layout.qrOrigin, layout.qrOrigin);
   const qrPath = squaresToPath(qrSvg);
@@ -293,6 +306,8 @@ async function cli() {
       "bg-shape": { type: "string", default: "rect" },
       "fg-color": { type: "string", default: "#000000" },
       "border-color": { type: "string", default: "#000000" },
+      "border-shape": { type: "string", default: "circle" },
+      "corner-radius": { type: "string", default: "0" },
     },
   });
 
@@ -311,6 +326,8 @@ async function cli() {
     bgShape: values["bg-shape"],
     fgColor: values["fg-color"],
     borderColor: values["border-color"],
+    borderShape: values["border-shape"],
+    cornerRadius: parseFloat(values["corner-radius"]),
   });
 
   writeFileSync(values.output, result);
