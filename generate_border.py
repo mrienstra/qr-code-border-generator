@@ -9,7 +9,8 @@ OUTPUT_SVG = "qr-code-generated.svg"
 QR_SIZE = 33  # 33x33 modules
 SVG_SIZE = 60  # output viewBox
 QR_ORIGIN = (SVG_SIZE - QR_SIZE) / 2  # 13.5 — centers QR in viewBox
-GAP = 1  # gap between QR and decoration copies
+GAP = 1  # gap between QR and orthogonal copies
+FLANK_GAP = 1  # gap between orthogonal copies and flanking copies
 
 
 def parse_qr(svg_path: str) -> set[tuple[int, int]]:
@@ -106,8 +107,8 @@ def offset_to_svg(
 
 
 FINDER_ZONE = 8  # 7x7 finder pattern + 1 separator
-FLANK_INSET = 15  # how far inward to shift flanking copies (8 + 7)
-FLANK_INSET_NO_FINDER = 0  # inset when the adjacent corner has no finder pattern
+FLANK_INSET = 2 * FINDER_ZONE - FLANK_GAP  # inset when both corners have finders (8+8-1=15)
+FLANK_INSET_NO_FINDER = -FLANK_GAP  # outset when the adjacent corner has no finder (-1)
 
 
 def make_top_center(filtered: set[tuple[int, int]]) -> set[tuple[int, int]]:
