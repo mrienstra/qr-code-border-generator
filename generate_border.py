@@ -136,6 +136,11 @@ def make_top_left(top_center: set[tuple[int, int]]) -> set[tuple[int, int]]:
     return shift(mirrored, -(QR_SIZE - FLANK_INSET), 0)
 
 
+CIRCLE_CX = SVG_SIZE / 2  # 30
+CIRCLE_CY = SVG_SIZE / 2  # 30
+CIRCLE_R = 27
+
+
 def write_svg(
     qr_path: str,
     decoration_paths: list[tuple[str, str, str]],
@@ -145,14 +150,26 @@ def write_svg(
 
     decoration_paths: list of (label, path_d, fill_color) tuples.
     """
+    cx, cy, r = CIRCLE_CX, CIRCLE_CY, CIRCLE_R
     lines = [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {SVG_SIZE} {SVG_SIZE}">',
         '  <rect width="100%" height="100%" fill="#ffffff"/>',
-        f'  <path d="{qr_path}"/>',
+        "  <defs>",
+        '    <clipPath id="circle-clip">',
+        f'      <circle cx="{cx}" cy="{cy}" r="{r}"/>',
+        "    </clipPath>",
+        "  </defs>",
+        '  <g clip-path="url(#circle-clip)">',
+        f'    <path d="{qr_path}"/>',
     ]
     for label, path_d, color in decoration_paths:
-        lines.append(f'  <!-- {label} -->')
-        lines.append(f'  <path d="{path_d}" fill="{color}"/>')
+        lines.append(f'    <!-- {label} -->')
+        lines.append(f'    <path d="{path_d}" fill="{color}"/>')
+    lines.append("  </g>")
+    lines.append(
+        f'  <circle cx="{cx}" cy="{cy}" r="{r}"'
+        f' fill="none" stroke="#000000" stroke-width="2"/>'
+    )
     lines.append("</svg>")
 
     with open(output, "w") as f:
@@ -262,7 +279,25 @@ def make_right_group(filtered: set[tuple[int, int]]) -> list[tuple[str, set[tupl
     ]
 
 
+DEBUG_COLORS = {
+    "top": ["#888888", "#cc4444", "#4444cc"],
+    "bottom": ["#aaaaaa", "#ee8888", "#8888ee"],
+    "left": ["#888888", "#cc4444", "#4444cc"],
+    "right": ["#aaaaaa", "#ee8888", "#8888ee"],
+}
+
+
 def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Generate QR code border SVG")
+    parser.add_argument(
+        "--colorful",
+        action="store_true",
+        help="Use distinct colors per copy for debugging",
+    )
+    args = parser.parse_args()
+
     qr = parse_qr(INPUT_SVG)
     print(f"Parsed {len(qr)} squares from {INPUT_SVG}")
 
@@ -274,19 +309,16 @@ def main():
     qr_svg = offset_to_svg(qr, QR_ORIGIN, QR_ORIGIN)
     qr_path = squares_to_path(qr_svg)
 
-    # Debug colors: center=gray, right/upper=red, left/lower=blue
-    group_colors = ["#888888", "#cc4444", "#4444cc"]
-    group_colors_light = ["#aaaaaa", "#ee8888", "#8888ee"]
-
-    groups = [
-        (make_top_group(filtered), group_colors),
-        (make_bottom_group(filtered), group_colors_light),
-        (make_left_group(filtered), group_colors),
-        (make_right_group(filtered), group_colors_light),
+    all_groups = [
+        ("top", make_top_group(filtered)),
+        ("bottom", make_bottom_group(filtered)),
+        ("left", make_left_group(filtered)),
+        ("right", make_right_group(filtered)),
     ]
 
     decoration_paths = []
-    for group, colors in groups:
+    for group_name, group in all_groups:
+        colors = DEBUG_COLORS[group_name] if args.colorful else ["#000000"] * 3
         for (label, svg_squares), color in zip(group, colors):
             path_d = squares_to_path(svg_squares)
             print(f"{label}: {len(svg_squares)} squares")
