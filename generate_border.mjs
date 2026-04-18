@@ -41,6 +41,19 @@ export function parseQr(svgText) {
   return { squares, qrSize };
 }
 
+// --- Deterministic PRNG (mulberry32, seeded from pixel data) ---
+
+function makeRng(squares) {
+  let seed = 0;
+  for (const k of squares) { const [c, r] = unkey(k); seed = (seed * 31 + c * 997 + r) >>> 0; }
+  return () => {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t ^= t + Math.imul(t ^ t >>> 7, 61 | t);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
 // --- Alignment pattern helpers ---
 
 function getAlignmentPositions(version) {
@@ -61,10 +74,7 @@ function randomizeAlignmentPatterns(squares, qrSize) {
   const version = (qrSize - 17) / 4;
   const positions = getAlignmentPositions(version);
   if (positions.length === 0) return squares;
-  // Deterministic PRNG seeded from QR data
-  let seed = 0;
-  for (const k of squares) { const [c, r] = unkey(k); seed = (seed * 31 + c * 997 + r) >>> 0; }
-  const rand = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t ^= t + Math.imul(t ^ t >>> 7, 61 | t); return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const rand = makeRng(squares);
   const last = qrSize - 7;
   const result = new Set(squares);
   for (const row of positions) {
@@ -358,6 +368,7 @@ export function generate(svgText, {
   gap = DEFAULT_GAP,
   flankGap = DEFAULT_FLANK_GAP,
   randAlign = false,
+  randFluff = false,
 } = {}) {
   const { squares: qr, qrSize } = parseQr(svgText);
   const layout = computeLayout(qrSize, circleRatio, strokeWidth, borderShape, cornerRadius, snapRadius);
@@ -369,7 +380,19 @@ export function generate(svgText, {
   const qrSvg = offsetToSvg(qr, layout.qrOrigin, layout.qrOrigin);
   const qrPath = squaresToPath(qrSvg);
 
-  const fluffQr = randAlign ? randomizeAlignmentPatterns(qr, qrSize) : qr;
+  // Determine fluff source
+  let fluffQr;
+  if (randFluff) {
+    // Full grid — every position is a candidate for random fill
+    fluffQr = new Set();
+    for (let y = 0; y < qrSize; y++)
+      for (let x = 0; x < qrSize; x++)
+        fluffQr.add(key(x, y));
+  } else if (randAlign) {
+    fluffQr = randomizeAlignmentPatterns(qr, qrSize);
+  } else {
+    fluffQr = qr;
+  }
 
   const allGroups = [
     ["top", makeTopGroup(fluffQr, layout)],
@@ -377,6 +400,21 @@ export function generate(svgText, {
     ["left", makeLeftGroup(fluffQr, layout)],
     ["right", makeRightGroup(fluffQr, layout)],
   ];
+
+  // Random fluff: randomly keep ~50% of all fluff pixels
+  if (randFluff) {
+    const rand = makeRng(qr);
+    for (const [, group] of allGroups) {
+      for (let i = 0; i < group.length; i++) {
+        const [label, squares] = group[i];
+        const filtered = new Set();
+        for (const k of squares) {
+          if (rand() < 0.5) filtered.add(k);
+        }
+        group[i] = [label, filtered];
+      }
+    }
+  }
 
   // Shuffle: swap center pieces across the diagonal (top↔left, bottom↔right)
   // and flip one flanking piece per side to break repetition
@@ -488,6 +526,7 @@ async function cli() {
       "gap": { type: "string", default: String(DEFAULT_GAP) },
       "flank-gap": { type: "string", default: String(DEFAULT_FLANK_GAP) },
       "rand-align": { type: "boolean", default: false },
+      "rand-fluff": { type: "boolean", default: false },
     },
   });
 
@@ -517,6 +556,7 @@ async function cli() {
     gap: parseInt(values["gap"]),
     flankGap: parseInt(values["flank-gap"]),
     randAlign: values["rand-align"],
+    randFluff: values["rand-fluff"],
   });
 
   writeFileSync(values.output, result);
