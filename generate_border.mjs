@@ -14,10 +14,10 @@ const CIRCLE_MARGIN = 3;
 const CIRCLE_STROKE_WIDTH = 2;
 
 const DEBUG_PALETTE = {
-  top: ["#888888", "#cc4444", "#4444cc", "#cc8844", "#4488cc"],
-  bottom: ["#aaaaaa", "#ee8888", "#8888ee", "#eeaa88", "#88aaee"],
-  left: ["#888888", "#cc4444", "#4444cc", "#cc8844", "#4488cc"],
-  right: ["#aaaaaa", "#ee8888", "#8888ee", "#eeaa88", "#88aaee"],
+  top: ["#cc2222", "#ff6666", "#992222", "#ff4444", "#bb4444"],
+  bottom: ["#2222cc", "#6666ff", "#222299", "#4444ff", "#4444bb"],
+  left: ["#22aa22", "#66dd66", "#228822", "#44cc44", "#44aa44"],
+  right: ["#cc8800", "#ffbb33", "#996600", "#eeaa00", "#bb9922"],
 };
 
 // --- Coordinate helpers (Set<string> since JS Sets lack tuple equality) ---
@@ -224,12 +224,12 @@ function makeTopGroup(qr, layout, reps = 2) {
   return result.map(([l, s]) => [l, trimCornersDiagonal(s, layout, true)]);
 }
 
-function makeBottomGroup(qr, layout) {
+function makeBottomGroup(qr, layout, reps = 1) {
   const { qrSize, qrOrigin, gap, flankInset, flankInsetNoFinder } = layout;
   const yOff = qrOrigin + qrSize + gap;
   const trimmed = trimEdges(qr, qrSize, { left: true });
   const center = flipVertical(trimmed, qrSize);
-  const flanks = makeFlankingH(center, qrSize, flankInsetNoFinder, flankInset);
+  const flanks = makeFlankingH(center, qrSize, flankInsetNoFinder, flankInset, reps);
   const result = [["bottom center", offsetToSvg(center, qrOrigin, yOff)]];
   for (const [side, sq] of flanks) result.push([`bottom ${side}`, offsetToSvg(sq, qrOrigin, yOff)]);
   return result.map(([l, s]) => [l, trimCornersDiagonal(s, layout, true)]);
@@ -246,12 +246,12 @@ function makeLeftGroup(qr, layout, reps = 2) {
   return result.map(([l, s]) => [l, trimCornersDiagonal(s, layout, false)]);
 }
 
-function makeRightGroup(qr, layout) {
+function makeRightGroup(qr, layout, reps = 1) {
   const { qrSize, qrOrigin, gap, flankInset, flankInsetNoFinder } = layout;
   const xOff = qrOrigin + qrSize + gap;
   const trimmed = trimEdges(qr, qrSize, { top: true });
   const center = flipHorizontal(trimmed, qrSize);
-  const flanks = makeFlankingV(center, qrSize, flankInsetNoFinder, flankInset);
+  const flanks = makeFlankingV(center, qrSize, flankInsetNoFinder, flankInset, reps);
   const result = [["right center", offsetToSvg(center, xOff, qrOrigin)]];
   for (const [side, sq] of flanks) result.push([`right ${side}`, offsetToSvg(sq, xOff, qrOrigin)]);
   return result.map(([l, s]) => [l, trimCornersDiagonal(s, layout, false)]);
@@ -377,6 +377,10 @@ export function generate(svgText, {
   layout.flankInsetNoFinder = -flankGap;
   layout.fillDiagonal = (flankGap === 0);
 
+  // Compute flanking reps needed to fill corners at current size ratio
+  const flankStep = qrSize - layout.flankInset;
+  const reps = Math.ceil((layout.qrOrigin + FINDER_ZONE) / flankStep);
+
   const qrSvg = offsetToSvg(qr, layout.qrOrigin, layout.qrOrigin);
   const qrPath = squaresToPath(qrSvg);
 
@@ -395,10 +399,10 @@ export function generate(svgText, {
   }
 
   const allGroups = [
-    ["top", makeTopGroup(fluffQr, layout)],
-    ["bottom", makeBottomGroup(fluffQr, layout)],
-    ["left", makeLeftGroup(fluffQr, layout)],
-    ["right", makeRightGroup(fluffQr, layout)],
+    ["top", makeTopGroup(fluffQr, layout, reps)],
+    ["bottom", makeBottomGroup(fluffQr, layout, reps)],
+    ["left", makeLeftGroup(fluffQr, layout, reps)],
+    ["right", makeRightGroup(fluffQr, layout, reps)],
   ];
 
   // Random fluff: randomly keep ~50% of all fluff pixels
