@@ -430,15 +430,29 @@ export function generate(svgText, {
     ["right", makeRightGroup(fluffQr, layout, repsAsymInset, repsAsymNoInset)],
   ];
 
-  // Random fluff: randomly keep ~50% of all fluff pixels
+  // Random fluff: randomly keep ~50% of pixels using a per-position hash.
+  // Each grid position gets a deterministic random value from its coordinates
+  // and QR seed, independent of layout, ratio, or which tiles/clipping exist.
   if (randFluff) {
-    const rand = makeRng(qr);
+    let baseSeed = 0;
+    for (const k of qr) { const [c, r] = unkey(k); baseSeed = (baseSeed * 31 + c * 997 + r) >>> 0; }
+    const ox = layout.qrOrigin;
+    function positionRand(svgX, svgY) {
+      const gx = Math.round(svgX - ox);
+      const gy = Math.round(svgY - ox);
+      let s = (baseSeed + gx * 374761393 + gy * 668265263) >>> 0;
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      let t = Math.imul(s ^ s >>> 15, 1 | s);
+      t ^= t + Math.imul(t ^ t >>> 7, 61 | t);
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    }
     for (const [, group] of allGroups) {
       for (let i = 0; i < group.length; i++) {
         const [label, squares] = group[i];
         const filtered = new Set();
         for (const k of squares) {
-          if (rand() < 0.5) filtered.add(k);
+          const [x, y] = unkey(k);
+          if (positionRand(x, y) < 0.5) filtered.add(k);
         }
         group[i] = [label, filtered];
       }
