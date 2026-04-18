@@ -605,6 +605,10 @@
     const stepControls = document.getElementById("step-controls");
     colorful.addEventListener("change", () => {
       stepControls.style.display = colorful.checked ? "flex" : "none";
+      if (!colorful.checked) {
+        stepSlider.value = stepSlider.max;
+        applyStepFilter();
+      }
       redraw();
     });
 
