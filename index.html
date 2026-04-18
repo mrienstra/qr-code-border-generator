@@ -242,7 +242,7 @@
           </div>
           <div class="checkbox-row">
             <input type="checkbox" id="colorful">
-            <label for="colorful">Colorful (debug)</label>
+            <label for="colorful">Debug (colorful)</label>
           </div>
         </div>
 
@@ -254,6 +254,11 @@
       <div class="preview">
         <div id="preview-svg"></div>
         <div class="stats" id="stats"></div>
+        <div class="step-controls" id="step-controls" style="margin-top:0.5rem;display:none;align-items:center;gap:0.5rem;width:100%;max-width:500px;">
+          <button id="step-play" class="btn btn-secondary" style="flex:none;width:2.2em;height:2.2em;padding:0;font-size:1rem;">&#9654;</button>
+          <input type="range" id="step-slider" min="0" max="10" value="10" style="flex:1;">
+          <span id="step-label" style="font-size:0.8rem;color:#888;min-width:5em;text-align:right;">All</span>
+        </div>
       </div>
     </div>
   </div>
@@ -319,6 +324,9 @@
     const previewSvg = document.getElementById("preview-svg");
     const statsEl = document.getElementById("stats");
     const downloadBtn = document.getElementById("download-btn");
+    const stepSlider = document.getElementById("step-slider");
+    const stepLabel = document.getElementById("step-label");
+    const stepPlayBtn = document.getElementById("step-play");
 
     // --- QR generation (using Nayuki library) ---
 
@@ -460,6 +468,7 @@
       if (get("ra") != null) randAlignCheckbox.checked = get("ra") === "1";
       if (get("rf") != null) randFluffCheckbox.checked = get("rf") === "1";
       if (get("dbg") != null) colorful.checked = get("dbg") === "1";
+      document.getElementById("step-controls").style.display = colorful.checked ? "flex" : "none";
     }
 
     // --- Redraw ---
@@ -503,6 +512,7 @@
 
       currentOutputSvg = result;
       previewSvg.innerHTML = result;
+      updateStepMax();
       saveToUrl();
     }
 
@@ -592,7 +602,11 @@
     shuffleCheckbox.addEventListener("change", redraw);
     randAlignCheckbox.addEventListener("change", redraw);
     randFluffCheckbox.addEventListener("change", redraw);
-    colorful.addEventListener("change", redraw);
+    const stepControls = document.getElementById("step-controls");
+    colorful.addEventListener("change", () => {
+      stepControls.style.display = colorful.checked ? "flex" : "none";
+      redraw();
+    });
 
     // Download
     downloadBtn.addEventListener("click", () => {
@@ -604,6 +618,63 @@
       a.download = "qr-code-border.svg";
       a.click();
       URL.revokeObjectURL(url);
+    });
+
+    // --- Step animation ---
+
+    let stepTimer = null;
+    const STEP_NAMES = ["QR code", "Reflections", "Flanking 1", "Flanking 2", "Flanking 3", "Flanking 4"];
+
+    function applyStepFilter() {
+      const svg = previewSvg.querySelector("svg");
+      if (!svg) return;
+      const max = parseInt(stepSlider.value);
+      const maxStep = parseInt(stepSlider.max);
+      svg.querySelectorAll("[data-step]").forEach(el => {
+        const s = parseInt(el.dataset.step);
+        el.style.display = s <= max ? "" : "none";
+      });
+      stepLabel.textContent = max >= maxStep ? "All" : (STEP_NAMES[max] || `Step ${max}`);
+    }
+
+    function updateStepMax() {
+      const svg = previewSvg.querySelector("svg");
+      if (!svg) return;
+      let maxStep = 0;
+      svg.querySelectorAll("[data-step]").forEach(el => {
+        maxStep = Math.max(maxStep, parseInt(el.dataset.step));
+      });
+      stepSlider.max = maxStep;
+      if (parseInt(stepSlider.value) > maxStep) stepSlider.value = maxStep;
+      applyStepFilter();
+    }
+
+    stepSlider.addEventListener("input", () => {
+      if (stepTimer) { clearInterval(stepTimer); stepTimer = null; stepPlayBtn.textContent = "\u25B6"; }
+      applyStepFilter();
+    });
+
+    stepPlayBtn.addEventListener("click", () => {
+      if (stepTimer) {
+        clearInterval(stepTimer);
+        stepTimer = null;
+        stepPlayBtn.textContent = "\u25B6";
+        return;
+      }
+      stepSlider.value = 0;
+      applyStepFilter();
+      stepPlayBtn.textContent = "\u23F8";
+      stepTimer = setInterval(() => {
+        const next = parseInt(stepSlider.value) + 1;
+        if (next > parseInt(stepSlider.max)) {
+          clearInterval(stepTimer);
+          stepTimer = null;
+          stepPlayBtn.textContent = "\u25B6";
+          return;
+        }
+        stepSlider.value = next;
+        applyStepFilter();
+      }, 800);
     });
 
     // --- Init ---

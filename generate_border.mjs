@@ -185,28 +185,46 @@ function trimCornersDiagonal(squares, layout, trimDxGeDy) {
 
 // --- Flanking helpers ---
 
-function makeFlankingH(center, qrSize, rightInset, leftInset, reps = 1) {
+function makeFlankingH(center, qrSize, rightInset, leftInset, leftReps = 1, rightReps = leftReps, flankGap = 0) {
   const mirrored = flipHorizontal(center, qrSize);
+  // Re-flip mirrored within its own column bounds for even reps:
+  // same extent as mirrored (consistent positioning) but different pixel data.
+  let minC = Infinity, maxC = -Infinity;
+  for (const k of mirrored) { const [c] = unkey(k); if (c < minC) minC = c; if (c > maxC) maxC = c; }
+  const reflected = new Set();
+  for (const k of mirrored) { const [c, r] = unkey(k); reflected.add(key(minC + maxC - c, r)); }
   const rightStep = qrSize - rightInset;
   const leftStep = qrSize - leftInset;
+  const tileStep = maxC - minC + 1 + flankGap;
   const results = [];
-  for (let i = 1; i <= reps; i++) {
-    const copy = i % 2 === 1 ? mirrored : center;
-    results.push(["left", shift(copy, -leftStep * i, 0)]);
-    results.push(["right", shift(copy, rightStep * i, 0)]);
+  const maxReps = Math.max(leftReps, rightReps);
+  for (let i = 1; i <= maxReps; i++) {
+    const copy = i % 2 === 1 ? mirrored : reflected;
+    const dx = i === 1 ? 0 : (i - 1) * tileStep;
+    if (i <= leftReps) results.push([`left:${i}`, shift(copy, -(leftStep + dx), 0)]);
+    if (i <= rightReps) results.push([`right:${i}`, shift(copy, rightStep + dx, 0)]);
   }
   return results;
 }
 
-function makeFlankingV(center, qrSize, lowerInset, upperInset, reps = 1) {
+function makeFlankingV(center, qrSize, lowerInset, upperInset, upperReps = 1, lowerReps = upperReps, flankGap = 0) {
   const mirrored = flipVertical(center, qrSize);
+  // Re-flip mirrored within its own row bounds for even reps:
+  // same extent as mirrored (consistent positioning) but different pixel data.
+  let minR = Infinity, maxR = -Infinity;
+  for (const k of mirrored) { const [, r] = unkey(k); if (r < minR) minR = r; if (r > maxR) maxR = r; }
+  const reflected = new Set();
+  for (const k of mirrored) { const [c, r] = unkey(k); reflected.add(key(c, minR + maxR - r)); }
   const upperStep = qrSize - upperInset;
   const lowerStep = qrSize - lowerInset;
+  const tileStep = maxR - minR + 1 + flankGap;
   const results = [];
-  for (let i = 1; i <= reps; i++) {
-    const copy = i % 2 === 1 ? mirrored : center;
-    results.push(["upper", shift(copy, 0, -upperStep * i)]);
-    results.push(["lower", shift(copy, 0, lowerStep * i)]);
+  const maxReps = Math.max(upperReps, lowerReps);
+  for (let i = 1; i <= maxReps; i++) {
+    const copy = i % 2 === 1 ? mirrored : reflected;
+    const dy = i === 1 ? 0 : (i - 1) * tileStep;
+    if (i <= upperReps) results.push([`upper:${i}`, shift(copy, 0, -(upperStep + dy))]);
+    if (i <= lowerReps) results.push([`lower:${i}`, shift(copy, 0, lowerStep + dy)]);
   }
   return results;
 }
@@ -218,18 +236,18 @@ function makeTopGroup(qr, layout, reps = 2) {
   const yOff = qrOrigin - gap - qrSize;
   const trimmed = trimEdges(qr, qrSize, { left: true, right: true });
   const center = flipVertical(trimmed, qrSize);
-  const flanks = makeFlankingH(center, qrSize, flankInset, flankInset, reps);
+  const flanks = makeFlankingH(center, qrSize, flankInset, flankInset, reps, reps, layout.flankGap);
   const result = [["top center", offsetToSvg(center, qrOrigin, yOff)]];
   for (const [side, sq] of flanks) result.push([`top ${side}`, offsetToSvg(sq, qrOrigin, yOff)]);
   return result.map(([l, s]) => [l, trimCornersDiagonal(s, layout, true)]);
 }
 
-function makeBottomGroup(qr, layout, reps = 1) {
+function makeBottomGroup(qr, layout, leftReps = 1, rightReps = 1) {
   const { qrSize, qrOrigin, gap, flankInset, flankInsetNoFinder } = layout;
   const yOff = qrOrigin + qrSize + gap;
   const trimmed = trimEdges(qr, qrSize, { left: true });
   const center = flipVertical(trimmed, qrSize);
-  const flanks = makeFlankingH(center, qrSize, flankInsetNoFinder, flankInset, reps);
+  const flanks = makeFlankingH(center, qrSize, flankInsetNoFinder, flankInset, leftReps, rightReps, layout.flankGap);
   const result = [["bottom center", offsetToSvg(center, qrOrigin, yOff)]];
   for (const [side, sq] of flanks) result.push([`bottom ${side}`, offsetToSvg(sq, qrOrigin, yOff)]);
   return result.map(([l, s]) => [l, trimCornersDiagonal(s, layout, true)]);
@@ -240,18 +258,18 @@ function makeLeftGroup(qr, layout, reps = 2) {
   const xOff = qrOrigin - gap - qrSize;
   const trimmed = trimEdges(qr, qrSize, { top: true, bottom: true });
   const center = flipHorizontal(trimmed, qrSize);
-  const flanks = makeFlankingV(center, qrSize, flankInset, flankInset, reps);
+  const flanks = makeFlankingV(center, qrSize, flankInset, flankInset, reps, reps, layout.flankGap);
   const result = [["left center", offsetToSvg(center, xOff, qrOrigin)]];
   for (const [side, sq] of flanks) result.push([`left ${side}`, offsetToSvg(sq, xOff, qrOrigin)]);
   return result.map(([l, s]) => [l, trimCornersDiagonal(s, layout, false)]);
 }
 
-function makeRightGroup(qr, layout, reps = 1) {
+function makeRightGroup(qr, layout, upperReps = 1, lowerReps = 1) {
   const { qrSize, qrOrigin, gap, flankInset, flankInsetNoFinder } = layout;
   const xOff = qrOrigin + qrSize + gap;
   const trimmed = trimEdges(qr, qrSize, { top: true });
   const center = flipHorizontal(trimmed, qrSize);
-  const flanks = makeFlankingV(center, qrSize, flankInsetNoFinder, flankInset, reps);
+  const flanks = makeFlankingV(center, qrSize, flankInsetNoFinder, flankInset, upperReps, lowerReps, layout.flankGap);
   const result = [["right center", offsetToSvg(center, xOff, qrOrigin)]];
   for (const [side, sq] of flanks) result.push([`right ${side}`, offsetToSvg(sq, xOff, qrOrigin)]);
   return result.map(([l, s]) => [l, trimCornersDiagonal(s, layout, false)]);
@@ -328,11 +346,11 @@ function generateSvg(qrPath, decorationPaths, layout, {
     `    </clipPath>`,
     `  </defs>`,
     `  <g clip-path="url(#border-clip)">`,
-    `    <path d="${qrPath}" fill="${fgColor}"/>`,
+    `    <path data-step="0" d="${qrPath}" fill="${fgColor}"/>`,
   );
-  for (const [label, pathD, color] of decorationPaths) {
+  for (const [label, pathD, color, step] of decorationPaths) {
     lines.push(`    <!-- ${label} -->`);
-    lines.push(`    <path d="${pathD}" fill="${color}"/>`);
+    lines.push(`    <path data-step="${step}" d="${pathD}" fill="${color}"/>`);
   }
   lines.push(`  </g>`);
   if (border2Color !== null) {
@@ -375,11 +393,18 @@ export function generate(svgText, {
   layout.gap = gap;
   layout.flankInset = 2 * FINDER_ZONE - flankGap;
   layout.flankInsetNoFinder = -flankGap;
+  layout.flankGap = flankGap;
   layout.fillDiagonal = (flankGap === 0);
 
-  // Compute flanking reps needed to fill corners at current size ratio
-  const flankStep = qrSize - layout.flankInset;
-  const reps = Math.ceil((layout.qrOrigin + FINDER_ZONE) / flankStep);
+  // Compute flanking reps needed to fill corners at current size ratio.
+  // Top/left groups trim both edges → narrower center (starts at col FINDER_ZONE).
+  // Bottom/right groups trim one edge → wider center (mirrored copy starts at col 0).
+  const step = qrSize - layout.flankInset;
+  const stepNoInset = qrSize - layout.flankInsetNoFinder;
+  const margin = CIRCLE_MARGIN;
+  const repsSymm = Math.max(2, Math.ceil((layout.qrOrigin + FINDER_ZONE - margin) / step));
+  const repsAsymInset = Math.max(1, Math.ceil((layout.qrOrigin - margin) / step));
+  const repsAsymNoInset = Math.max(1, Math.ceil((layout.qrOrigin - margin) / stepNoInset));
 
   const qrSvg = offsetToSvg(qr, layout.qrOrigin, layout.qrOrigin);
   const qrPath = squaresToPath(qrSvg);
@@ -399,10 +424,10 @@ export function generate(svgText, {
   }
 
   const allGroups = [
-    ["top", makeTopGroup(fluffQr, layout, reps)],
-    ["bottom", makeBottomGroup(fluffQr, layout, reps)],
-    ["left", makeLeftGroup(fluffQr, layout, reps)],
-    ["right", makeRightGroup(fluffQr, layout, reps)],
+    ["top", makeTopGroup(fluffQr, layout, repsSymm)],
+    ["bottom", makeBottomGroup(fluffQr, layout, repsAsymInset, repsAsymNoInset)],
+    ["left", makeLeftGroup(fluffQr, layout, repsSymm)],
+    ["right", makeRightGroup(fluffQr, layout, repsAsymInset, repsAsymNoInset)],
   ];
 
   // Random fluff: randomly keep ~50% of all fluff pixels
@@ -489,13 +514,29 @@ export function generate(svgText, {
     }
   }
 
+  // Deduplicate within each group (earlier tiles take priority)
+  for (const [, group] of allGroups) {
+    const seen = new Set();
+    for (let i = 0; i < group.length; i++) {
+      const [label, squares] = group[i];
+      const deduped = new Set();
+      for (const k of squares) {
+        if (!seen.has(k)) { deduped.add(k); seen.add(k); }
+      }
+      group[i] = [label, deduped];
+    }
+  }
+
   const decorationPaths = [];
   for (const [groupName, group] of allGroups) {
     const palette = colorful ? DEBUG_PALETTE[groupName] : null;
     for (let i = 0; i < group.length; i++) {
       const [label, svgSquares] = group[i];
       const color = palette ? palette[i % palette.length] : fgColor;
-      decorationPaths.push([label, squaresToPath(svgSquares), color]);
+      // Step: 0=QR, 1=center reflections, 2+=flanking rep N
+      const repMatch = label.match(/:(\d+)$/);
+      const step = repMatch ? parseInt(repMatch[1]) + 1 : 1;
+      decorationPaths.push([label, squaresToPath(svgSquares), color, step]);
     }
   }
 
