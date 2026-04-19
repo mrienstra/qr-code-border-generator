@@ -105,7 +105,7 @@ function positionHash(col, row, baseSeed, regionId) {
   return ((t ^ t >>> 14) >>> 0) / 4294967296;
 }
 
-function obfuscatePatterns(squares, qrSize, finderAmounts, alignAmount) {
+function obfuscatePatterns(squares, qrSize, finderAmounts, alignAmount, darkOnly = false) {
   let baseSeed = 0;
   for (const k of squares) { const [c, r] = unkey(k); baseSeed = (baseSeed * 31 + c * 997 + r) >>> 0; }
 
@@ -124,8 +124,9 @@ function obfuscatePatterns(squares, qrSize, finderAmounts, alignAmount) {
     for (let dr = 0; dr < FINDER_ZONE; dr++) {
       for (let dc = 0; dc < FINDER_ZONE; dc++) {
         const col = c0 + dc, row = r0 + dr;
+        const k = key(col, row);
+        if (darkOnly && !squares.has(k)) continue;
         if (positionHash(col, row, baseSeed, id) < amount) {
-          const k = key(col, row);
           result.delete(k);
           if (positionHash(col, row, baseSeed, id + 10) < 0.5) result.add(k);
         }
@@ -146,8 +147,9 @@ function obfuscatePatterns(squares, qrSize, finderAmounts, alignAmount) {
         for (let dy = -2; dy <= 2; dy++) {
           for (let dx = -2; dx <= 2; dx++) {
             const c = col + dx, r = row + dy;
+            const k = key(c, r);
+            if (darkOnly && !squares.has(k)) continue;
             if (positionHash(c, r, baseSeed, 4) < alignAmount) {
-              const k = key(c, r);
               result.delete(k);
               if (positionHash(c, r, baseSeed, 14) < 0.5) result.add(k);
             }
@@ -456,7 +458,7 @@ export function generate(svgText, {
 } = {}) {
   let { squares: qr, qrSize } = parseQr(svgText);
   if (obfuscate) {
-    qr = obfuscatePatterns(qr, qrSize, obfuscate.slice(0, 3), obfuscate[3]);
+    qr = obfuscatePatterns(qr, qrSize, obfuscate.amounts.slice(0, 3), obfuscate.amounts[3], obfuscate.darkOnly);
   }
   const layout = computeLayout(qrSize, circleRatio, strokeWidth, borderShape, cornerRadius, snapRadius);
   layout.gap = gap;

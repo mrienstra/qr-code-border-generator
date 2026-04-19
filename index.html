@@ -273,6 +273,10 @@
                 <span class="range-value" id="obf-align-value">0</span>
               </div>
             </div>
+            <div class="checkbox-row">
+              <input type="checkbox" id="obf-dark-only">
+              <label for="obf-dark-only">Dark regions only</label>
+            </div>
           </div>
           <div class="checkbox-row">
             <input type="checkbox" id="colorful">
@@ -364,6 +368,7 @@
     const obfBlValue = document.getElementById("obf-bl-value");
     const obfAlign = document.getElementById("obf-align");
     const obfAlignValue = document.getElementById("obf-align-value");
+    const obfDarkOnly = document.getElementById("obf-dark-only");
     const colorful = document.getElementById("colorful");
     const previewSvg = document.getElementById("preview-svg");
     const statsEl = document.getElementById("stats");
@@ -429,7 +434,7 @@
       fg: "000000", fga: "1", bc: "000000", bca: "1",
       b2: "0", b2c: "ffffff", b2a: "1", b2w: "4", b2o: "0", b2t: "0",
       bg: "ffffff", bga: "1", bgs: "circle", gap: "1", fgap: "1", shuf: "0", ra: "1", rf: "0",
-      obf: "0", otl: "0", otr: "0", obl: "0", oal: "0", dbg: "0",
+      obf: "0", otl: "0", otr: "0", obl: "0", oal: "0", oeo: "0", dbg: "0",
     };
 
     function saveToUrl() {
@@ -454,6 +459,7 @@
         rf: randFluffCheckbox.checked ? "1" : "0",
         obf: obfuscateCheckbox.checked ? "1" : "0",
         otl: obfTl.value, otr: obfTr.value, obl: obfBl.value, oal: obfAlign.value,
+        oeo: obfDarkOnly.checked ? "1" : "0",
         dbg: colorful.checked ? "1" : "0",
       };
       const params = new URLSearchParams();
@@ -519,6 +525,7 @@
       if (get("otr") != null) { obfTr.value = get("otr"); obfTrValue.textContent = get("otr"); }
       if (get("obl") != null) { obfBl.value = get("obl"); obfBlValue.textContent = get("obl"); }
       if (get("oal") != null) { obfAlign.value = get("oal"); obfAlignValue.textContent = get("oal"); }
+      if (get("oeo") != null) obfDarkOnly.checked = get("oeo") === "1";
       obfuscateFields.style.display = obfuscateCheckbox.checked ? "" : "none";
       if (get("dbg") != null) colorful.checked = get("dbg") === "1";
       document.getElementById("step-controls").style.display = colorful.checked ? "flex" : "none";
@@ -561,7 +568,10 @@
         flankGap: parseInt(flankGapInput.value),
         randAlign: randAlignCheckbox.checked,
         randFluff: randFluffCheckbox.checked,
-        obfuscate: obfuscateCheckbox.checked ? [parseFloat(obfTl.value), parseFloat(obfTr.value), parseFloat(obfBl.value), parseFloat(obfAlign.value)] : null,
+        obfuscate: obfuscateCheckbox.checked ? {
+          amounts: [parseFloat(obfTl.value), parseFloat(obfTr.value), parseFloat(obfBl.value), parseFloat(obfAlign.value)],
+          darkOnly: obfDarkOnly.checked,
+        } : null,
       });
 
       currentOutputSvg = result;
@@ -667,6 +677,7 @@
         redraw();
       });
     }
+    obfDarkOnly.addEventListener("change", redraw);
     const stepControls = document.getElementById("step-controls");
     colorful.addEventListener("change", () => {
       stepControls.style.display = colorful.checked ? "flex" : "none";
