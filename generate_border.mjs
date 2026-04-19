@@ -111,18 +111,18 @@ function obfuscatePatterns(squares, qrSize, finderAmounts, alignAmount) {
 
   const result = new Set(squares);
 
-  // Finder pattern regions (7×7)
+  // Finder pattern regions (8×8: 7×7 pattern + 1px separator)
   const finderRegions = [
     { c0: 0, r0: 0, id: 1 },                       // top-left
-    { c0: qrSize - 7, r0: 0, id: 2 },               // top-right
-    { c0: 0, r0: qrSize - 7, id: 3 },               // bottom-left
+    { c0: qrSize - FINDER_ZONE, r0: 0, id: 2 },    // top-right
+    { c0: 0, r0: qrSize - FINDER_ZONE, id: 3 },    // bottom-left
   ];
   for (let f = 0; f < 3; f++) {
     const amount = finderAmounts[f];
     if (amount <= 0) continue;
     const { c0, r0, id } = finderRegions[f];
-    for (let dr = 0; dr < 7; dr++) {
-      for (let dc = 0; dc < 7; dc++) {
+    for (let dr = 0; dr < FINDER_ZONE; dr++) {
+      for (let dc = 0; dc < FINDER_ZONE; dc++) {
         const col = c0 + dc, row = r0 + dr;
         if (positionHash(col, row, baseSeed, id) < amount) {
           const k = key(col, row);
