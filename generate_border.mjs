@@ -95,6 +95,71 @@ function randomizeAlignmentPatterns(squares, qrSize) {
   return result;
 }
 
+// --- Obfuscation (puzzle mode) ---
+
+function positionHash(col, row, baseSeed, regionId) {
+  let s = (baseSeed + col * 374761393 + row * 668265263 + regionId * 49979693) >>> 0;
+  s |= 0; s = s + 0x6D2B79F5 | 0;
+  let t = Math.imul(s ^ s >>> 15, 1 | s);
+  t ^= t + Math.imul(t ^ t >>> 7, 61 | t);
+  return ((t ^ t >>> 14) >>> 0) / 4294967296;
+}
+
+function obfuscatePatterns(squares, qrSize, finderAmounts, alignAmount) {
+  let baseSeed = 0;
+  for (const k of squares) { const [c, r] = unkey(k); baseSeed = (baseSeed * 31 + c * 997 + r) >>> 0; }
+
+  const result = new Set(squares);
+
+  // Finder pattern regions (7×7)
+  const finderRegions = [
+    { c0: 0, r0: 0, id: 1 },                       // top-left
+    { c0: qrSize - 7, r0: 0, id: 2 },               // top-right
+    { c0: 0, r0: qrSize - 7, id: 3 },               // bottom-left
+  ];
+  for (let f = 0; f < 3; f++) {
+    const amount = finderAmounts[f];
+    if (amount <= 0) continue;
+    const { c0, r0, id } = finderRegions[f];
+    for (let dr = 0; dr < 7; dr++) {
+      for (let dc = 0; dc < 7; dc++) {
+        const col = c0 + dc, row = r0 + dr;
+        if (positionHash(col, row, baseSeed, id) < amount) {
+          const k = key(col, row);
+          result.delete(k);
+          if (positionHash(col, row, baseSeed, id + 10) < 0.5) result.add(k);
+        }
+      }
+    }
+  }
+
+  // Alignment patterns (5×5)
+  if (alignAmount > 0) {
+    const version = (qrSize - 17) / 4;
+    const positions = getAlignmentPositions(version);
+    const last = qrSize - 7;
+    for (const row of positions) {
+      for (const col of positions) {
+        if (row === 6 && col === 6) continue;
+        if (row === 6 && col === last) continue;
+        if (row === last && col === 6) continue;
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            const c = col + dx, r = row + dy;
+            if (positionHash(c, r, baseSeed, 4) < alignAmount) {
+              const k = key(c, r);
+              result.delete(k);
+              if (positionHash(c, r, baseSeed, 14) < 0.5) result.add(k);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
 export function computeLayout(qrSize, circleRatio = CIRCLE_RATIO, strokeWidth = CIRCLE_STROKE_WIDTH, borderShape = "circle", cornerRadius = 0, snapRadius = false) {
   let circleR = qrSize * circleRatio;
   if (snapRadius) circleR = Math.round(circleR);
@@ -387,8 +452,12 @@ export function generate(svgText, {
   flankGap = DEFAULT_FLANK_GAP,
   randAlign = false,
   randFluff = false,
+  obfuscate = null,
 } = {}) {
-  const { squares: qr, qrSize } = parseQr(svgText);
+  let { squares: qr, qrSize } = parseQr(svgText);
+  if (obfuscate) {
+    qr = obfuscatePatterns(qr, qrSize, obfuscate.slice(0, 3), obfuscate[3]);
+  }
   const layout = computeLayout(qrSize, circleRatio, strokeWidth, borderShape, cornerRadius, snapRadius);
   layout.gap = gap;
   layout.flankInset = 2 * FINDER_ZONE - flankGap;
