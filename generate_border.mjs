@@ -462,10 +462,11 @@ export function generate(svgText, {
   }
   const layout = computeLayout(qrSize, circleRatio, strokeWidth, borderShape, cornerRadius, snapRadius);
   layout.gap = gap;
-  layout.flankInset = 2 * FINDER_ZONE - flankGap;
-  layout.flankInsetNoFinder = -flankGap;
-  layout.flankGap = flankGap;
-  layout.fillDiagonal = (flankGap === 0);
+  const effectiveFlankGap = randFluff ? 0 : flankGap;
+  layout.flankInset = 2 * FINDER_ZONE - effectiveFlankGap;
+  layout.flankInsetNoFinder = -effectiveFlankGap;
+  layout.flankGap = effectiveFlankGap;
+  layout.fillDiagonal = (effectiveFlankGap === 0);
 
   // Compute flanking reps needed to fill corners at current size ratio.
   // Top/left groups trim both edges → narrower center (starts at col FINDER_ZONE).
@@ -609,6 +610,29 @@ export function generate(svgText, {
         if (!seen.has(k)) { deduped.add(k); seen.add(k); }
       }
       group[i] = [label, deduped];
+    }
+  }
+
+  // Grid gap: when randFluff is on with flankGap > 0, remove pixels on grid lines
+  // that extend the QR gap border outward, creating a '#' pattern instead of tile-based gaps.
+  if (randFluff && flankGap > 0) {
+    const ox = layout.qrOrigin;
+    const leftVMin = -flankGap, leftVMax = -1;
+    const rightVMin = qrSize, rightVMax = qrSize + flankGap - 1;
+    for (const [, group] of allGroups) {
+      for (let i = 0; i < group.length; i++) {
+        const [label, svgSquares] = group[i];
+        const filtered = new Set();
+        for (const k of svgSquares) {
+          const [x, y] = unkey(k);
+          const gx = Math.round(x - ox);
+          const gy = Math.round(y - ox);
+          if ((gx >= leftVMin && gx <= leftVMax) || (gx >= rightVMin && gx <= rightVMax)) continue;
+          if ((gy >= leftVMin && gy <= leftVMax) || (gy >= rightVMin && gy <= rightVMax)) continue;
+          filtered.add(k);
+        }
+        group[i] = [label, filtered];
+      }
     }
   }
 
