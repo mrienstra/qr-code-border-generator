@@ -280,6 +280,14 @@
               <input type="checkbox" id="obf-dark-only">
               <label for="obf-dark-only">Dark regions only</label>
             </div>
+            <div class="checkbox-row">
+              <input type="checkbox" id="obf-border">
+              <label for="obf-border">Overlay border</label>
+            </div>
+            <div class="field">
+              <label>Overlay tint</label>
+              <input type="text" id="obf-tint" value="rgba(0,0,30,0.1)">
+            </div>
           </div>
           <div class="checkbox-row">
             <input type="checkbox" id="colorful">
@@ -372,6 +380,8 @@
     const obfAlign = document.getElementById("obf-align");
     const obfAlignValue = document.getElementById("obf-align-value");
     const obfDarkOnly = document.getElementById("obf-dark-only");
+    const obfBorder = document.getElementById("obf-border");
+    const obfTint = document.getElementById("obf-tint");
     const colorful = document.getElementById("colorful");
     const previewSvg = document.getElementById("preview-svg");
     const statsEl = document.getElementById("stats");
@@ -682,6 +692,8 @@
       });
     }
     obfDarkOnly.addEventListener("change", redraw);
+    obfBorder.addEventListener("change", setupSolverOverlay);
+    obfTint.addEventListener("input", setupSolverOverlay);
     const stepControls = document.getElementById("step-controls");
     colorful.addEventListener("change", () => {
       stepControls.style.display = colorful.checked ? "flex" : "none";
@@ -773,6 +785,8 @@
       if (!svg || !currentSvgSource) return;
       const existing = svg.querySelector("#solver-overlay");
       if (existing) existing.remove();
+      const existingFilter = svg.querySelector("#solver-shadow");
+      if (existingFilter) existingFilter.remove();
       if (!obfuscateCheckbox.checked) return;
 
       const amounts = [parseFloat(obfTl.value), parseFloat(obfTr.value), parseFloat(obfBl.value), parseFloat(obfAlign.value)];
@@ -788,6 +802,55 @@
       g.style.pointerEvents = "none";
       g.style.display = "none";
       g.dataset.qrSize = qrSize;
+
+      // Simulate clear plastic: blue tint, 1px border + 20px bottom handle, drop shadow
+      const pad = 1, handle = 20;
+      const pW = qrSize + pad * 2, pH = qrSize + pad + handle;
+
+      // Drop shadow filter
+      const filter = document.createElementNS("http://www.w3.org/2000/svg", "filter");
+      filter.id = "solver-shadow";
+      filter.setAttribute("x", "-20%"); filter.setAttribute("y", "-20%");
+      filter.setAttribute("width", "140%"); filter.setAttribute("height", "140%");
+      const feOff = document.createElementNS("http://www.w3.org/2000/svg", "feOffset");
+      feOff.setAttribute("in", "SourceAlpha"); feOff.setAttribute("dx", "1"); feOff.setAttribute("dy", "1");
+      const feBlur = document.createElementNS("http://www.w3.org/2000/svg", "feGaussianBlur");
+      feBlur.setAttribute("stdDeviation", "1.5");
+      const feFlood = document.createElementNS("http://www.w3.org/2000/svg", "feFlood");
+      feFlood.setAttribute("flood-color", "rgba(0,0,0,0.3)");
+      const feComp = document.createElementNS("http://www.w3.org/2000/svg", "feComposite");
+      feComp.setAttribute("in2", ""); feComp.setAttribute("operator", "in");
+      const feMerge = document.createElementNS("http://www.w3.org/2000/svg", "feMerge");
+      const feMN1 = document.createElementNS("http://www.w3.org/2000/svg", "feMergeNode");
+      const feMN2 = document.createElementNS("http://www.w3.org/2000/svg", "feMergeNode");
+      feMN2.setAttribute("in", "SourceGraphic");
+      filter.append(feOff, feBlur, feFlood, feComp, feMerge);
+      feMerge.append(feMN1, feMN2);
+      // Chain: SourceAlpha → offset → blur (result1), flood → composite in result1 → merge with SourceGraphic
+      feOff.setAttribute("result", "off"); feBlur.setAttribute("in", "off"); feBlur.setAttribute("result", "blur");
+      feFlood.setAttribute("result", "color"); feComp.setAttribute("in", "color"); feComp.setAttribute("in2", "blur");
+      const defs = svg.querySelector("defs") || svg.insertBefore(document.createElementNS("http://www.w3.org/2000/svg", "defs"), svg.firstChild);
+      defs.appendChild(filter);
+
+      g.setAttribute("filter", "url(#solver-shadow)");
+
+      const plastic = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      plastic.setAttribute("x", -pad); plastic.setAttribute("y", -pad);
+      plastic.setAttribute("width", pW); plastic.setAttribute("height", pH);
+      plastic.setAttribute("fill", obfTint.value);
+      g.appendChild(plastic);
+
+      // Optional white border matching the gap around the QR code
+      if (obfBorder.checked) {
+        const gapW = parseInt(gapInput.value) || 1;
+        const border = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        const outer = `M${-gapW},${-gapW}h${qrSize + gapW * 2}v${qrSize + gapW * 2}h${-(qrSize + gapW * 2)}z`;
+        const inner = `M0,0h${qrSize}v${qrSize}h${-qrSize}z`;
+        border.setAttribute("d", `${outer} ${inner}`);
+        border.setAttribute("fill", bgCol);
+        border.setAttribute("fill-rule", "evenodd");
+        g.appendChild(border);
+      }
 
       // Finder pattern positions (7x7 dark pattern, 8x8 zone with separator)
       const finderOffsets = [[0, 0], [qrSize - 7, 0], [0, qrSize - 7]];
