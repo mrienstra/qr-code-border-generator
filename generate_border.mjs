@@ -56,7 +56,7 @@ function makeRng(squares) {
 
 // --- Alignment pattern helpers ---
 
-function getAlignmentPositions(version) {
+export function getAlignmentPositions(version) {
   if (version <= 1) return [];
   const size = version * 4 + 17;
   const numAlign = Math.floor(version / 7) + 2;

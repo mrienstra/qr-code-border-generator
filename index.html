@@ -306,7 +306,7 @@
 
   <script src="qrcodegen.js"></script>
   <script type="module">
-    import { generate, parseQr } from "./generate_border.mjs";
+    import { generate, parseQr, computeLayout, getAlignmentPositions } from "./generate_border.mjs";
 
     const QrCode = qrcodegen.QrCode;
     const QrSegment = qrcodegen.QrSegment;
@@ -580,6 +580,7 @@
       currentOutputSvg = result;
       previewSvg.innerHTML = result;
       updateStepMax();
+      setupSolverOverlay();
       saveToUrl();
     }
 
@@ -758,6 +759,128 @@
         stepSlider.value = next;
         applyStepFilter();
       }, 800);
+    });
+
+    // --- Solver overlay ---
+
+    const isFinderDark = (x, y) =>
+      y === 0 || y === 6 || x === 0 || x === 6 || (x >= 2 && x <= 4 && y >= 2 && y <= 4);
+    const isAlignDark = (dx, dy) =>
+      Math.abs(dx) === 2 || Math.abs(dy) === 2 || (dx === 0 && dy === 0);
+
+    function setupSolverOverlay() {
+      const svg = previewSvg.querySelector("svg");
+      if (!svg || !currentSvgSource) return;
+      const existing = svg.querySelector("#solver-overlay");
+      if (existing) existing.remove();
+      if (!obfuscateCheckbox.checked) return;
+
+      const amounts = [parseFloat(obfTl.value), parseFloat(obfTr.value), parseFloat(obfBl.value), parseFloat(obfAlign.value)];
+      if (!amounts.some(a => a > 0)) return;
+
+      const { qrSize } = parseQr(currentSvgSource);
+      const darkOnly = obfDarkOnly.checked;
+      const fgCol = colorWithAlpha(fgColor.value, parseFloat(fgAlpha.value));
+      const bgCol = colorWithAlpha(bgColor.value, parseFloat(bgAlpha.value));
+
+      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      g.id = "solver-overlay";
+      g.style.pointerEvents = "none";
+      g.style.display = "none";
+      g.dataset.qrSize = qrSize;
+
+      // Finder pattern positions (7x7 dark pattern, 8x8 zone with separator)
+      const finderOffsets = [[0, 0], [qrSize - 7, 0], [0, qrSize - 7]];
+      const finderZoneOffsets = [[0, 0], [qrSize - 8, 0], [0, qrSize - 8]];
+
+      // Background rects when not dark-only (cover the full randomized zones)
+      if (!darkOnly) {
+        for (let i = 0; i < 3; i++) {
+          if (amounts[i] <= 0) continue;
+          const [zx, zy] = finderZoneOffsets[i];
+          const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+          bg.setAttribute("x", zx); bg.setAttribute("y", zy);
+          bg.setAttribute("width", "8"); bg.setAttribute("height", "8");
+          bg.setAttribute("fill", bgCol);
+          g.appendChild(bg);
+        }
+        if (amounts[3] > 0) {
+          const version = (qrSize - 17) / 4;
+          const positions = getAlignmentPositions(version);
+          const last = qrSize - 7;
+          for (const row of positions)
+            for (const col of positions) {
+              if (row === 6 && col === 6) continue;
+              if (row === 6 && col === last) continue;
+              if (row === last && col === 6) continue;
+              const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+              bg.setAttribute("x", col - 2); bg.setAttribute("y", row - 2);
+              bg.setAttribute("width", "5"); bg.setAttribute("height", "5");
+              bg.setAttribute("fill", bgCol);
+              g.appendChild(bg);
+            }
+        }
+      }
+
+      // Dark pixel path for all active patterns
+      const parts = [];
+      for (let i = 0; i < 3; i++) {
+        if (amounts[i] <= 0) continue;
+        const [fx, fy] = finderOffsets[i];
+        for (let y = 0; y < 7; y++)
+          for (let x = 0; x < 7; x++)
+            if (isFinderDark(x, y))
+              parts.push(`M${fx + x},${fy + y}h1v1h-1z`);
+      }
+      if (amounts[3] > 0) {
+        const version = (qrSize - 17) / 4;
+        const positions = getAlignmentPositions(version);
+        const last = qrSize - 7;
+        for (const row of positions)
+          for (const col of positions) {
+            if (row === 6 && col === 6) continue;
+            if (row === 6 && col === last) continue;
+            if (row === last && col === 6) continue;
+            for (let dy = -2; dy <= 2; dy++)
+              for (let dx = -2; dx <= 2; dx++)
+                if (isAlignDark(dx, dy))
+                  parts.push(`M${col + dx},${row + dy}h1v1h-1z`);
+          }
+      }
+      if (parts.length > 0) {
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", parts.join(" "));
+        path.setAttribute("fill", fgCol);
+        g.appendChild(path);
+      }
+
+      svg.appendChild(g);
+    }
+
+    previewSvg.addEventListener("mouseenter", () => {
+      const overlay = previewSvg.querySelector("#solver-overlay");
+      if (!overlay) return;
+      overlay.style.display = "";
+      previewSvg.style.cursor = "none";
+    });
+
+    previewSvg.addEventListener("mouseleave", () => {
+      const overlay = previewSvg.querySelector("#solver-overlay");
+      if (overlay) overlay.style.display = "none";
+      previewSvg.style.cursor = "";
+    });
+
+    previewSvg.addEventListener("mousemove", (e) => {
+      const svg = previewSvg.querySelector("svg");
+      const overlay = svg?.querySelector("#solver-overlay");
+      if (!overlay || overlay.style.display === "none") return;
+      const qrSize = parseInt(overlay.dataset.qrSize);
+      const pt = svg.createSVGPoint();
+      pt.x = e.clientX;
+      pt.y = e.clientY;
+      const svgPt = pt.matrixTransform(svg.getScreenCTM().inverse());
+      // Center the full QR-sized overlay on cursor
+      overlay.setAttribute("transform", `translate(${svgPt.x - qrSize / 2}, ${svgPt.y - qrSize / 2})`);
     });
 
     // --- Init ---
