@@ -447,7 +447,8 @@
       fg: "000000", fga: "1", bc: "000000", bca: "1",
       b2: "0", b2c: "ffffff", b2a: "1", b2w: "4", b2o: "0", b2t: "0",
       bg: "ffffff", bga: "1", bgs: "circle", gap: "1", fgap: "1", shuf: "0", ra: "1", rf: "0",
-      obf: "0", otl: "0", otr: "0", obl: "0", oal: "0", oeo: "0", dbg: "0",
+      obf: "0", otl: "0", otr: "0", obl: "0", oal: "0", oeo: "0",
+      obd: "0", obt: "rgba(0,0,30,0.1)", dbg: "0",
     };
 
     function saveToUrl() {
@@ -473,6 +474,8 @@
         obf: obfuscateCheckbox.checked ? "1" : "0",
         otl: obfTl.value, otr: obfTr.value, obl: obfBl.value, oal: obfAlign.value,
         oeo: obfDarkOnly.checked ? "1" : "0",
+        obd: obfBorder.checked ? "1" : "0",
+        obt: obfTint.value,
         dbg: colorful.checked ? "1" : "0",
       };
       const params = new URLSearchParams();
@@ -539,6 +542,8 @@
       if (get("obl") != null) { obfBl.value = get("obl"); obfBlValue.textContent = get("obl"); }
       if (get("oal") != null) { obfAlign.value = get("oal"); obfAlignValue.textContent = get("oal"); }
       if (get("oeo") != null) obfDarkOnly.checked = get("oeo") === "1";
+      if (get("obd") != null) obfBorder.checked = get("obd") === "1";
+      if (get("obt") != null) obfTint.value = get("obt");
       obfuscateFields.style.display = obfuscateCheckbox.checked ? "" : "none";
       if (get("dbg") != null) colorful.checked = get("dbg") === "1";
       document.getElementById("step-controls").style.display = colorful.checked ? "flex" : "none";
@@ -692,8 +697,8 @@
       });
     }
     obfDarkOnly.addEventListener("change", redraw);
-    obfBorder.addEventListener("change", setupSolverOverlay);
-    obfTint.addEventListener("input", setupSolverOverlay);
+    obfBorder.addEventListener("change", () => { setupSolverOverlay(); saveToUrl(); });
+    obfTint.addEventListener("input", () => { setupSolverOverlay(); saveToUrl(); });
     const stepControls = document.getElementById("step-controls");
     colorful.addEventListener("change", () => {
       stepControls.style.display = colorful.checked ? "flex" : "none";
@@ -787,6 +792,8 @@
       if (existing) existing.remove();
       const existingFilter = svg.querySelector("#solver-shadow");
       if (existingFilter) existingFilter.remove();
+      const existingFilter2 = svg.querySelector("#solver-shadow-plastic");
+      if (existingFilter2) existingFilter2.remove();
       if (!obfuscateCheckbox.checked) return;
 
       const amounts = [parseFloat(obfTl.value), parseFloat(obfTr.value), parseFloat(obfBl.value), parseFloat(obfAlign.value)];
@@ -813,7 +820,7 @@
       filter.setAttribute("x", "-20%"); filter.setAttribute("y", "-20%");
       filter.setAttribute("width", "140%"); filter.setAttribute("height", "140%");
       const feOff = document.createElementNS("http://www.w3.org/2000/svg", "feOffset");
-      feOff.setAttribute("in", "SourceAlpha"); feOff.setAttribute("dx", "1"); feOff.setAttribute("dy", "1");
+      feOff.setAttribute("in", "SourceAlpha"); feOff.setAttribute("dx", "0.1"); feOff.setAttribute("dy", "1");
       const feBlur = document.createElementNS("http://www.w3.org/2000/svg", "feGaussianBlur");
       feBlur.setAttribute("stdDeviation", "1.5");
       const feFlood = document.createElementNS("http://www.w3.org/2000/svg", "feFlood");
@@ -829,16 +836,54 @@
       // Chain: SourceAlpha → offset → blur (result1), flood → composite in result1 → merge with SourceGraphic
       feOff.setAttribute("result", "off"); feBlur.setAttribute("in", "off"); feBlur.setAttribute("result", "blur");
       feFlood.setAttribute("result", "color"); feComp.setAttribute("in", "color"); feComp.setAttribute("in2", "blur");
+      // Subtle shadow filter for the transparent plastic area
+      const filter2 = document.createElementNS("http://www.w3.org/2000/svg", "filter");
+      filter2.id = "solver-shadow-plastic";
+      filter2.setAttribute("x", "-20%"); filter2.setAttribute("y", "-20%");
+      filter2.setAttribute("width", "140%"); filter2.setAttribute("height", "140%");
+      const feOff2 = document.createElementNS("http://www.w3.org/2000/svg", "feOffset");
+      feOff2.setAttribute("in", "SourceAlpha"); feOff2.setAttribute("dx", "0.1"); feOff2.setAttribute("dy", "0.5");
+      const feBlur2 = document.createElementNS("http://www.w3.org/2000/svg", "feGaussianBlur");
+      feBlur2.setAttribute("stdDeviation", "0.8");
+      const feFlood2 = document.createElementNS("http://www.w3.org/2000/svg", "feFlood");
+      feFlood2.setAttribute("flood-color", "rgba(0,0,0,0.1)");
+      const feComp2 = document.createElementNS("http://www.w3.org/2000/svg", "feComposite");
+      feComp2.setAttribute("operator", "in");
+      const feMerge2 = document.createElementNS("http://www.w3.org/2000/svg", "feMerge");
+      const feMN2a = document.createElementNS("http://www.w3.org/2000/svg", "feMergeNode");
+      filter2.append(feOff2, feBlur2, feFlood2, feComp2, feMerge2);
+      feMerge2.append(feMN2a);
+      feOff2.setAttribute("result", "off2"); feBlur2.setAttribute("in", "off2"); feBlur2.setAttribute("result", "blur2");
+      feFlood2.setAttribute("result", "color2"); feComp2.setAttribute("in", "color2"); feComp2.setAttribute("in2", "blur2");
+
       const defs = svg.querySelector("defs") || svg.insertBefore(document.createElementNS("http://www.w3.org/2000/svg", "defs"), svg.firstChild);
       defs.appendChild(filter);
+      defs.appendChild(filter2);
 
-      g.setAttribute("filter", "url(#solver-shadow)");
-
+      // Visual tint rect (no filter)
       const plastic = document.createElementNS("http://www.w3.org/2000/svg", "rect");
       plastic.setAttribute("x", -pad); plastic.setAttribute("y", -pad);
       plastic.setAttribute("width", pW); plastic.setAttribute("height", pH);
       plastic.setAttribute("fill", obfTint.value);
       g.appendChild(plastic);
+
+      // Edge-only frame for plastic shadow (filter outputs shadow only, no SourceGraphic)
+      const plasticG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      plasticG.setAttribute("filter", "url(#solver-shadow-plastic)");
+      const edgeW = 0.5;
+      const ox = -pad, oy = -pad;
+      const outerEdge = `M${ox},${oy}h${pW}v${pH}h${-pW}z`;
+      const innerEdge = `M${ox + edgeW},${oy + edgeW}h${pW - edgeW * 2}v${pH - edgeW * 2}h${-(pW - edgeW * 2)}z`;
+      const edgePath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      edgePath.setAttribute("d", `${outerEdge} ${innerEdge}`);
+      edgePath.setAttribute("fill", "#000");
+      edgePath.setAttribute("fill-rule", "evenodd");
+      plasticG.appendChild(edgePath);
+      g.appendChild(plasticG);
+
+      // Solid elements group with stronger shadow
+      const solidG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      solidG.setAttribute("filter", "url(#solver-shadow)");
 
       // Optional white border matching the gap around the QR code
       if (obfBorder.checked) {
@@ -849,7 +894,7 @@
         border.setAttribute("d", `${outer} ${inner}`);
         border.setAttribute("fill", bgCol);
         border.setAttribute("fill-rule", "evenodd");
-        g.appendChild(border);
+        solidG.appendChild(border);
       }
 
       // Finder pattern positions (7x7 dark pattern, 8x8 zone with separator)
@@ -865,7 +910,7 @@
           bg.setAttribute("x", zx); bg.setAttribute("y", zy);
           bg.setAttribute("width", "8"); bg.setAttribute("height", "8");
           bg.setAttribute("fill", bgCol);
-          g.appendChild(bg);
+          solidG.appendChild(bg);
         }
         if (amounts[3] > 0) {
           const version = (qrSize - 17) / 4;
@@ -880,7 +925,7 @@
               bg.setAttribute("x", col - 2); bg.setAttribute("y", row - 2);
               bg.setAttribute("width", "5"); bg.setAttribute("height", "5");
               bg.setAttribute("fill", bgCol);
-              g.appendChild(bg);
+              solidG.appendChild(bg);
             }
         }
       }
@@ -914,9 +959,10 @@
         const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
         path.setAttribute("d", parts.join(" "));
         path.setAttribute("fill", fgCol);
-        g.appendChild(path);
+        solidG.appendChild(path);
       }
 
+      g.appendChild(solidG);
       svg.appendChild(g);
     }
 
