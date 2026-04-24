@@ -746,7 +746,7 @@
         maxStep = Math.max(maxStep, parseInt(el.dataset.step));
       });
       stepSlider.max = maxStep;
-      if (parseInt(stepSlider.value) > maxStep) stepSlider.value = maxStep;
+      if (!colorful.checked || parseInt(stepSlider.value) > maxStep) stepSlider.value = maxStep;
       applyStepFilter();
     }
 
