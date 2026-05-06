@@ -211,6 +211,24 @@ function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagona
   const ri = rInner;
   const rif = fmt(ri);
   const nrif = fmt(-ri);
+  // --- Jiggle: organic variation ---
+  // What works: per-corner arc radius variation + Bézier control point
+  // offsets on inner corner / diagonal fills. Arcs meet straight edges at
+  // exact H/V tangents, so no kinks. Vertex-keyed hashing ensures adjacent
+  // pixels sharing a corner use the same radius — no gaps.
+  //
+  // What failed: bowing straight edges with quadratic Béziers. Caused
+  // (a) seams at inner corners (bowed edge ≠ straight fill boundary),
+  // (b) tangent discontinuities at arc–edge junctions (visible bumps).
+  // Suppressing bows near inner corners (vertex cell-count check) fixed
+  // (a) but (b) is inherent — can't bow perpendicular and keep H/V tangent
+  // with a single quadratic. Would need cubic Béziers or multi-segment
+  // curves, adding complexity for marginal visual gain.
+  //
+  // Future: contour tracing (merge pixels into single outline loops) would
+  // eliminate inner corner fills entirely and make edge effects trivial —
+  // one path per connected region, no shared-edge alignment issues.
+  //
   // Deterministic per-vertex hash for jiggle variation
   function vtxHash(vx, vy, ch = 0) {
     let s = (Math.round(vx * 1e6) * 374761393 + Math.round(vy * 1e6) * 668265263 + ch * 49979693) >>> 0;
@@ -308,7 +326,7 @@ function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagona
       p.push('z');
       path = p.join('');
     } else {
-      // Jiggled path: per-corner radii
+      // Jiggled path: per-corner radii, straight edges
       const p = [];
       p.push(`M${fmt(x + (tl ? tlR : 0))},${fmt(y)}`);
       const topLen = 1 - (tl ? tlR : 0) - (tr ? trR : 0);
@@ -332,28 +350,29 @@ function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagona
     // the two edge directions, filling the curved triangle at the corner.
     if (ri > 0) {
       // Jiggle only the Bézier control point, NOT the endpoint.
-      // Endpoints must stay on pixel edges so the fill connects flush.
-      // In q(cx,cy, ex,ey): (cx,cy) = control point, (ex,ey) = endpoint.
+      // Endpoints stay on pixel edges so the fill connects flush.
+      // Edge bowing is suppressed at inner corner vertices (above), so
+      // the adjacent pixel edges remain straight where fills attach.
       if (hasL && hasU && !allPixels.has(key(x - 1, y - 1))) {
-        // TL inner at vertex (x, y): start=(x,y-ri), CP=(x,y), end=(x-ri,y)
+        // TL inner at vertex (x, y)
         const jcx = jiggle > 0 ? (vtxHash(x, y, 1) - 0.5) * jiggle * ri : 0;
         const jcy = jiggle > 0 ? (vtxHash(x, y, 2) - 0.5) * jiggle * ri : 0;
         path += ` M${fmt(x)},${fmt(y - ri)}q${fmt(jcx)},${fmt(ri + jcy)},${nrif},${rif}h${rif}z`;
       }
       if (hasR && hasU && !allPixels.has(key(x + 1, y - 1))) {
-        // TR inner at vertex (x+1, y): start=(x+1+ri,y), CP=(x+1,y), end=(x+1,y-ri)
+        // TR inner at vertex (x+1, y)
         const jcx = jiggle > 0 ? (vtxHash(x + 1, y, 1) - 0.5) * jiggle * ri : 0;
         const jcy = jiggle > 0 ? (vtxHash(x + 1, y, 2) - 0.5) * jiggle * ri : 0;
         path += ` M${fmt(x + 1 + ri)},${fmt(y)}q${fmt(-ri + jcx)},${fmt(jcy)},${nrif},${nrif}v${rif}z`;
       }
       if (hasR && hasD && !allPixels.has(key(x + 1, y + 1))) {
-        // BR inner at vertex (x+1, y+1): start=(x+1,y+1+ri), CP=(x+1,y+1), end=(x+1+ri,y+1)
+        // BR inner at vertex (x+1, y+1)
         const jcx = jiggle > 0 ? (vtxHash(x + 1, y + 1, 1) - 0.5) * jiggle * ri : 0;
         const jcy = jiggle > 0 ? (vtxHash(x + 1, y + 1, 2) - 0.5) * jiggle * ri : 0;
         path += ` M${fmt(x + 1)},${fmt(y + 1 + ri)}q${fmt(jcx)},${fmt(-ri + jcy)},${rif},${nrif}h${nrif}z`;
       }
       if (hasL && hasD && !allPixels.has(key(x - 1, y + 1))) {
-        // BL inner at vertex (x, y+1): start=(x-ri,y+1), CP=(x,y+1), end=(x,y+1+ri)
+        // BL inner at vertex (x, y+1)
         const jcx = jiggle > 0 ? (vtxHash(x, y + 1, 1) - 0.5) * jiggle * ri : 0;
         const jcy = jiggle > 0 ? (vtxHash(x, y + 1, 2) - 0.5) * jiggle * ri : 0;
         path += ` M${fmt(x - ri)},${fmt(y + 1)}q${fmt(ri + jcx)},${fmt(jcy)},${rif},${rif}v${nrif}z`;
@@ -364,14 +383,12 @@ function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagona
     // fillets to avoid duplication — the other pixel handles its half.
     if (ri > 0) {
       if (diagBR) {
-        // Vertex (x+1, y+1): two fillets, jiggle control points only
         const jcx = jiggle > 0 ? (vtxHash(x + 1, y + 1, 3) - 0.5) * jiggle * ri : 0;
         const jcy = jiggle > 0 ? (vtxHash(x + 1, y + 1, 4) - 0.5) * jiggle * ri : 0;
         path += ` M${fmt(x + 1)},${fmt(y + 1 - ri)}q${fmt(jcx)},${fmt(ri + jcy)},${rif},${rif}h${nrif}z`;
         path += ` M${fmt(x + 1 - ri)},${fmt(y + 1)}q${fmt(ri + jcx)},${fmt(jcy)},${rif},${rif}v${nrif}z`;
       }
       if (diagBL) {
-        // Vertex (x, y+1): two fillets, jiggle control points only
         const jcx = jiggle > 0 ? (vtxHash(x, y + 1, 3) - 0.5) * jiggle * ri : 0;
         const jcy = jiggle > 0 ? (vtxHash(x, y + 1, 4) - 0.5) * jiggle * ri : 0;
         path += ` M${fmt(x)},${fmt(y + 1 - ri)}q${fmt(jcx)},${fmt(ri + jcy)},${nrif},${rif}h${rif}z`;
