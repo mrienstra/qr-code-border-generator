@@ -200,7 +200,7 @@ function squaresToPath(squares) {
   }).join(" ");
 }
 
-function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagonals = false, diagOnly = false) {
+function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagonals = false, diagOnly = false, jiggle = 0) {
   const sorted = [...squares].map(unkey).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
   // Outer corner formatting
   const ro = rOuter;
@@ -211,6 +211,14 @@ function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagona
   const ri = rInner;
   const rif = fmt(ri);
   const nrif = fmt(-ri);
+  // Deterministic per-vertex hash for jiggle variation
+  function vtxHash(vx, vy, ch = 0) {
+    let s = (Math.round(vx * 1e6) * 374761393 + Math.round(vy * 1e6) * 668265263 + ch * 49979693) >>> 0;
+    s |= 0; s = s + 0x6D2B79F5 | 0;
+    let t = Math.imul(s ^ s >>> 15, 1 | s);
+    t ^= t + Math.imul(t ^ t >>> 7, 61 | t);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  }
   return sorted.map(([x, y]) => {
     const hasL = allPixels.has(key(x - 1, y));
     const hasR = allPixels.has(key(x + 1, y));
@@ -266,30 +274,55 @@ function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagona
     const tr = ro > 0 && !hasR && !hasU && !(diagOnly ? hasTR : diagTR);
     const br = ro > 0 && !hasR && !hasD && !(diagOnly ? hasBR : diagBR);
     const bl = ro > 0 && !hasL && !hasD && !(diagOnly ? hasBL : diagBL);
+    // Per-corner radii: when jiggle > 0, vary each corner's radius using
+    // a deterministic hash of the corner vertex position. Adjacent pixels
+    // sharing a vertex get the same hash → same radius → no gaps.
+    let tlR = ro, trR = ro, brR = ro, blR = ro;
+    if (jiggle > 0 && ro > 0) {
+      const clampR = (v) => Math.max(0.01, Math.min(0.5, v));
+      if (tl) tlR = clampR(ro * (1 + (vtxHash(x, y) - 0.5) * jiggle));
+      if (tr) trR = clampR(ro * (1 + (vtxHash(x + 1, y) - 0.5) * jiggle));
+      if (br) brR = clampR(ro * (1 + (vtxHash(x + 1, y + 1) - 0.5) * jiggle));
+      if (bl) blR = clampR(ro * (1 + (vtxHash(x, y + 1) - 0.5) * jiggle));
+    }
     // Outer corners: rounded pixel outline
     let path;
     if (!tl && !tr && !br && !bl) {
       path = `M${fmt(x)},${fmt(y)}h1v1h-1z`;
-    } else {
+    } else if (jiggle === 0) {
+      // Fast path: uniform radius, reuse preformatted arc string
       const p = [];
-      // Start: top-left area
       p.push(`M${fmt(x + (tl ? ro : 0))},${fmt(y)}`);
-      // Top edge → TR
       const topLen = 1 - (tl ? ro : 0) - (tr ? ro : 0);
       if (topLen > 0) p.push(`h${fmt(topLen)}`);
       if (tr) p.push(`${af}${rof},${rof}`);
-      // Right edge → BR
       const rightLen = 1 - (tr ? ro : 0) - (br ? ro : 0);
       if (rightLen > 0) p.push(`v${fmt(rightLen)}`);
       if (br) p.push(`${af}${nrof},${rof}`);
-      // Bottom edge → BL
       const bottomLen = 1 - (br ? ro : 0) - (bl ? ro : 0);
       if (bottomLen > 0) p.push(`h${fmt(-bottomLen)}`);
       if (bl) p.push(`${af}${nrof},${nrof}`);
-      // Left edge → TL
       const leftLen = 1 - (bl ? ro : 0) - (tl ? ro : 0);
       if (leftLen > 0) p.push(`v${fmt(-leftLen)}`);
       if (tl) p.push(`${af}${rof},${nrof}`);
+      p.push('z');
+      path = p.join('');
+    } else {
+      // Jiggled path: per-corner radii
+      const p = [];
+      p.push(`M${fmt(x + (tl ? tlR : 0))},${fmt(y)}`);
+      const topLen = 1 - (tl ? tlR : 0) - (tr ? trR : 0);
+      if (topLen > 0) p.push(`h${fmt(topLen)}`);
+      if (tr) p.push(`a${fmt(trR)},${fmt(trR)},0,0,1,${fmt(trR)},${fmt(trR)}`);
+      const rightLen = 1 - (tr ? trR : 0) - (br ? brR : 0);
+      if (rightLen > 0) p.push(`v${fmt(rightLen)}`);
+      if (br) p.push(`a${fmt(brR)},${fmt(brR)},0,0,1,${fmt(-brR)},${fmt(brR)}`);
+      const bottomLen = 1 - (br ? brR : 0) - (bl ? blR : 0);
+      if (bottomLen > 0) p.push(`h${fmt(-bottomLen)}`);
+      if (bl) p.push(`a${fmt(blR)},${fmt(blR)},0,0,1,${fmt(-blR)},${fmt(-blR)}`);
+      const leftLen = 1 - (bl ? blR : 0) - (tl ? tlR : 0);
+      if (leftLen > 0) p.push(`v${fmt(-leftLen)}`);
+      if (tl) p.push(`a${fmt(tlR)},${fmt(tlR)},0,0,1,${fmt(tlR)},${fmt(-tlR)}`);
       p.push('z');
       path = p.join('');
     }
@@ -298,21 +331,32 @@ function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagona
     // (L-shape junction). Quadratic Bézier smoothly transitions between
     // the two edge directions, filling the curved triangle at the corner.
     if (ri > 0) {
+      // Jiggle only the Bézier control point, NOT the endpoint.
+      // Endpoints must stay on pixel edges so the fill connects flush.
+      // In q(cx,cy, ex,ey): (cx,cy) = control point, (ex,ey) = endpoint.
       if (hasL && hasU && !allPixels.has(key(x - 1, y - 1))) {
-        // TL inner at vertex (x, y)
-        path += ` M${fmt(x)},${fmt(y - ri)}q0,${rif},${nrif},${rif}h${rif}z`;
+        // TL inner at vertex (x, y): start=(x,y-ri), CP=(x,y), end=(x-ri,y)
+        const jcx = jiggle > 0 ? (vtxHash(x, y, 1) - 0.5) * jiggle * ri : 0;
+        const jcy = jiggle > 0 ? (vtxHash(x, y, 2) - 0.5) * jiggle * ri : 0;
+        path += ` M${fmt(x)},${fmt(y - ri)}q${fmt(jcx)},${fmt(ri + jcy)},${nrif},${rif}h${rif}z`;
       }
       if (hasR && hasU && !allPixels.has(key(x + 1, y - 1))) {
-        // TR inner at vertex (x+1, y)
-        path += ` M${fmt(x + 1 + ri)},${fmt(y)}q${nrif},0,${nrif},${nrif}v${rif}z`;
+        // TR inner at vertex (x+1, y): start=(x+1+ri,y), CP=(x+1,y), end=(x+1,y-ri)
+        const jcx = jiggle > 0 ? (vtxHash(x + 1, y, 1) - 0.5) * jiggle * ri : 0;
+        const jcy = jiggle > 0 ? (vtxHash(x + 1, y, 2) - 0.5) * jiggle * ri : 0;
+        path += ` M${fmt(x + 1 + ri)},${fmt(y)}q${fmt(-ri + jcx)},${fmt(jcy)},${nrif},${nrif}v${rif}z`;
       }
       if (hasR && hasD && !allPixels.has(key(x + 1, y + 1))) {
-        // BR inner at vertex (x+1, y+1)
-        path += ` M${fmt(x + 1)},${fmt(y + 1 + ri)}q0,${nrif},${rif},${nrif}h${nrif}z`;
+        // BR inner at vertex (x+1, y+1): start=(x+1,y+1+ri), CP=(x+1,y+1), end=(x+1+ri,y+1)
+        const jcx = jiggle > 0 ? (vtxHash(x + 1, y + 1, 1) - 0.5) * jiggle * ri : 0;
+        const jcy = jiggle > 0 ? (vtxHash(x + 1, y + 1, 2) - 0.5) * jiggle * ri : 0;
+        path += ` M${fmt(x + 1)},${fmt(y + 1 + ri)}q${fmt(jcx)},${fmt(-ri + jcy)},${rif},${nrif}h${nrif}z`;
       }
       if (hasL && hasD && !allPixels.has(key(x - 1, y + 1))) {
-        // BL inner at vertex (x, y+1)
-        path += ` M${fmt(x - ri)},${fmt(y + 1)}q${rif},0,${rif},${rif}v${nrif}z`;
+        // BL inner at vertex (x, y+1): start=(x-ri,y+1), CP=(x,y+1), end=(x,y+1+ri)
+        const jcx = jiggle > 0 ? (vtxHash(x, y + 1, 1) - 0.5) * jiggle * ri : 0;
+        const jcy = jiggle > 0 ? (vtxHash(x, y + 1, 2) - 0.5) * jiggle * ri : 0;
+        path += ` M${fmt(x - ri)},${fmt(y + 1)}q${fmt(ri + jcx)},${fmt(jcy)},${rif},${rif}v${nrif}z`;
       }
     }
     // Diagonal connections: bridge two diagonally adjacent pixels with two
@@ -320,12 +364,18 @@ function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagona
     // fillets to avoid duplication — the other pixel handles its half.
     if (ri > 0) {
       if (diagBR) {
-        path += ` M${fmt(x + 1)},${fmt(y + 1 - ri)}q0,${rif},${rif},${rif}h${nrif}z`;
-        path += ` M${fmt(x + 1 - ri)},${fmt(y + 1)}q${rif},0,${rif},${rif}v${nrif}z`;
+        // Vertex (x+1, y+1): two fillets, jiggle control points only
+        const jcx = jiggle > 0 ? (vtxHash(x + 1, y + 1, 3) - 0.5) * jiggle * ri : 0;
+        const jcy = jiggle > 0 ? (vtxHash(x + 1, y + 1, 4) - 0.5) * jiggle * ri : 0;
+        path += ` M${fmt(x + 1)},${fmt(y + 1 - ri)}q${fmt(jcx)},${fmt(ri + jcy)},${rif},${rif}h${nrif}z`;
+        path += ` M${fmt(x + 1 - ri)},${fmt(y + 1)}q${fmt(ri + jcx)},${fmt(jcy)},${rif},${rif}v${nrif}z`;
       }
       if (diagBL) {
-        path += ` M${fmt(x)},${fmt(y + 1 - ri)}q0,${rif},${nrif},${rif}h${rif}z`;
-        path += ` M${fmt(x + ri)},${fmt(y + 1)}q${nrif},0,${nrif},${rif}v${nrif}z`;
+        // Vertex (x, y+1): two fillets, jiggle control points only
+        const jcx = jiggle > 0 ? (vtxHash(x, y + 1, 3) - 0.5) * jiggle * ri : 0;
+        const jcy = jiggle > 0 ? (vtxHash(x, y + 1, 4) - 0.5) * jiggle * ri : 0;
+        path += ` M${fmt(x)},${fmt(y + 1 - ri)}q${fmt(jcx)},${fmt(ri + jcy)},${nrif},${rif}h${rif}z`;
+        path += ` M${fmt(x + ri)},${fmt(y + 1)}q${fmt(-ri + jcx)},${fmt(jcy)},${nrif},${rif}v${nrif}z`;
       }
     }
     return path;
@@ -594,6 +644,7 @@ export function generate(svgText, {
   roundedInner = 0,
   connectDiagonals = 0,
   diagOnly = false,
+  jiggle = 0,
 } = {}) {
   let { squares: qr, qrSize } = parseQr(svgText);
   if (obfuscate) {
@@ -781,7 +832,7 @@ export function generate(svgText, {
     for (const [, group] of allGroups)
       for (const [, squares] of group)
         for (const k of squares) allPixels.add(k);
-    toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, diagOnly);
+    toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, diagOnly, jiggle);
 
     // Diagnostic: check for adjacency mismatches (floating-point key issues)
     if (colorful) {

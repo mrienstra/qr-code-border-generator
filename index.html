@@ -319,6 +319,13 @@
               <input type="checkbox" id="diag-only">
               <label for="diag-only">Suppress corners at diagonals</label>
             </div>
+            <div class="field">
+              <label>Jiggle</label>
+              <div class="field-row">
+                <input type="range" id="jiggle" min="0" max="1" step="0.01" value="0">
+                <span class="range-value" id="jiggle-value">0</span>
+              </div>
+            </div>
           </div>
           <div class="checkbox-row">
             <input type="checkbox" id="colorful">
@@ -422,6 +429,8 @@
     const connectDiagonalsSlider = document.getElementById("connect-diagonals");
     const connectDiagonalsValue = document.getElementById("connect-diagonals-value");
     const diagOnlyCheckbox = document.getElementById("diag-only");
+    const jiggleSlider = document.getElementById("jiggle");
+    const jiggleValue = document.getElementById("jiggle-value");
     function cdLabel(v) {
       const n = parseFloat(v);
       if (n === 0) return 'Off';
@@ -495,7 +504,7 @@
       bg: "ffffff", bga: "1", bgs: "circle", gap: "1", fgap: "1", shuf: "0", ra: "1", rf: "0",
       obf: "0", otl: "0", otr: "0", obl: "0", oal: "0", oeo: "0",
       obd: "0", obt: "rgba(0,0,30,0.1)",
-      rp: "0", rpr: "0.3", rpri: "0.3", cd: "0", dgo: "0",
+      rp: "0", rpr: "0.3", rpri: "0.3", cd: "0", dgo: "0", rj: "0",
       dbg: "0",
     };
 
@@ -529,6 +538,7 @@
         rpri: roundedInner.value,
         cd: connectDiagonalsSlider.value,
         dgo: diagOnlyCheckbox.checked ? "1" : "0",
+        rj: jiggleSlider.value,
         dbg: colorful.checked ? "1" : "0",
       };
       const params = new URLSearchParams();
@@ -603,6 +613,7 @@
       if (get("rpri") != null) { roundedInner.value = get("rpri"); roundedInnerValue.textContent = parseFloat(get("rpri")).toFixed(2); }
       if (get("cd") != null) { connectDiagonalsSlider.value = get("cd"); connectDiagonalsValue.textContent = cdLabel(get("cd")); }
       if (get("dgo") != null) diagOnlyCheckbox.checked = get("dgo") === "1";
+      if (get("rj") != null) { jiggleSlider.value = get("rj"); jiggleValue.textContent = get("rj"); }
       roundedPixelsFields.style.display = roundedPixelsCheckbox.checked ? "" : "none";
       if (get("dbg") != null) colorful.checked = get("dbg") === "1";
       document.getElementById("step-controls").style.display = colorful.checked ? "flex" : "none";
@@ -653,6 +664,7 @@
         roundedInner: roundedPixelsCheckbox.checked ? parseFloat(roundedInner.value) : 0,
         connectDiagonals: parseFloat(connectDiagonalsSlider.value),
         diagOnly: diagOnlyCheckbox.checked,
+        jiggle: parseFloat(jiggleSlider.value),
       });
 
       currentOutputSvg = result;
@@ -779,6 +791,10 @@
       redraw();
     });
     diagOnlyCheckbox.addEventListener("change", () => redraw());
+    jiggleSlider.addEventListener("input", () => {
+      jiggleValue.textContent = jiggleSlider.value;
+      redraw();
+    });
     const stepControls = document.getElementById("step-controls");
     colorful.addEventListener("change", () => {
       stepControls.style.display = colorful.checked ? "flex" : "none";
