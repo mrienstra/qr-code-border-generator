@@ -141,6 +141,7 @@ export function generate(svgText, {
   connectDiagonals = 0,
   diagOnly = false,
   jiggle = 0,
+  fullLCorners = false,
   wobbleFreq = 0,
   wobbleOctaves = 3,
   wobbleScale = 0,
@@ -331,7 +332,7 @@ export function generate(svgText, {
     for (const [, group] of allGroups)
       for (const [, squares] of group)
         for (const k of squares) allPixels.add(k);
-    toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, diagOnly, jiggle);
+    toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, diagOnly, jiggle, fullLCorners);
 
     // Diagnostic: check for adjacency mismatches (floating-point key issues)
     if (colorful) {
@@ -437,6 +438,7 @@ async function cli() {
       "flank-gap": { type: "string", default: String(DEFAULT_FLANK_GAP) },
       "rand-align": { type: "boolean", default: false },
       "rand-fluff": { type: "boolean", default: false },
+      "full-l-corners": { type: "boolean", default: false },
     },
   });
 
@@ -467,6 +469,7 @@ async function cli() {
     flankGap: parseInt(values["flank-gap"]),
     randAlign: values["rand-align"],
     randFluff: values["rand-fluff"],
+    fullLCorners: values["full-l-corners"],
   });
 
   writeFileSync(values.output, result);

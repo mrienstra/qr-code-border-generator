@@ -100,7 +100,7 @@ export function squaresToPath(squares) {
   }).join(" ");
 }
 
-export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagonals = false, diagOnly = false, jiggle = 0) {
+export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagonals = false, diagOnly = false, jiggle = 0, fullLCorners = false) {
   const sorted = [...squares].map(unkey).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
   // Outer corner formatting
   const ro = rOuter;
@@ -203,11 +203,19 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
       if (br) brR = clampR(ro * (1 + (vtxHash(x + 1, y + 1) - 0.5) * jiggle));
       if (bl) blR = clampR(ro * (1 + (vtxHash(x, y + 1) - 0.5) * jiggle));
     }
+    // L-shape detection: single exposed corner with both opposite cardinals
+    // present gets full pixel-size radius (1.0) instead of the standard rOuter.
+    if (fullLCorners && ro > 0) {
+      if (tl && hasR && hasD) tlR = 1;
+      if (tr && hasL && hasD) trR = 1;
+      if (br && hasL && hasU) brR = 1;
+      if (bl && hasR && hasU) blR = 1;
+    }
     // Outer corners: rounded pixel outline
     let path;
     if (!tl && !tr && !br && !bl) {
       path = `M${fmt(x)},${fmt(y)}h1v1h-1z`;
-    } else if (jiggle === 0) {
+    } else if (jiggle === 0 && tlR === ro && trR === ro && brR === ro && blR === ro) {
       // Fast path: uniform radius, reuse preformatted arc string
       const p = [];
       p.push(`M${fmt(x + (tl ? ro : 0))},${fmt(y)}`);
