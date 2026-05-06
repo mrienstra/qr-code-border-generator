@@ -326,6 +326,27 @@
                 <span class="range-value" id="jiggle-value">0</span>
               </div>
             </div>
+            <div class="field">
+              <label>Wobble freq</label>
+              <div class="field-row">
+                <input type="range" id="wobble-freq" min="0" max="0.2" step="0.001" value="0">
+                <span class="range-value" id="wobble-freq-value">0</span>
+              </div>
+            </div>
+            <div class="field">
+              <label>Wobble octaves</label>
+              <div class="field-row">
+                <input type="range" id="wobble-octaves" min="1" max="5" step="1" value="3">
+                <span class="range-value" id="wobble-octaves-value">3</span>
+              </div>
+            </div>
+            <div class="field">
+              <label>Wobble scale</label>
+              <div class="field-row">
+                <input type="range" id="wobble-scale" min="0" max="2" step="0.01" value="0">
+                <span class="range-value" id="wobble-scale-value">0</span>
+              </div>
+            </div>
           </div>
           <div class="checkbox-row">
             <input type="checkbox" id="colorful">
@@ -431,6 +452,12 @@
     const diagOnlyCheckbox = document.getElementById("diag-only");
     const jiggleSlider = document.getElementById("jiggle");
     const jiggleValue = document.getElementById("jiggle-value");
+    const wobbleFreqSlider = document.getElementById("wobble-freq");
+    const wobbleFreqValue = document.getElementById("wobble-freq-value");
+    const wobbleOctavesSlider = document.getElementById("wobble-octaves");
+    const wobbleOctavesValue = document.getElementById("wobble-octaves-value");
+    const wobbleScaleSlider = document.getElementById("wobble-scale");
+    const wobbleScaleValue = document.getElementById("wobble-scale-value");
     function cdLabel(v) {
       const n = parseFloat(v);
       if (n === 0) return 'Off';
@@ -505,6 +532,7 @@
       obf: "0", otl: "0", otr: "0", obl: "0", oal: "0", oeo: "0",
       obd: "0", obt: "rgba(0,0,30,0.1)",
       rp: "0", rpr: "0.3", rpri: "0.3", cd: "0", dgo: "0", rj: "0",
+      wf: "0", wo: "3", ws: "0",
       dbg: "0",
     };
 
@@ -539,6 +567,7 @@
         cd: connectDiagonalsSlider.value,
         dgo: diagOnlyCheckbox.checked ? "1" : "0",
         rj: jiggleSlider.value,
+        wf: wobbleFreqSlider.value, wo: wobbleOctavesSlider.value, ws: wobbleScaleSlider.value,
         dbg: colorful.checked ? "1" : "0",
       };
       const params = new URLSearchParams();
@@ -614,6 +643,9 @@
       if (get("cd") != null) { connectDiagonalsSlider.value = get("cd"); connectDiagonalsValue.textContent = cdLabel(get("cd")); }
       if (get("dgo") != null) diagOnlyCheckbox.checked = get("dgo") === "1";
       if (get("rj") != null) { jiggleSlider.value = get("rj"); jiggleValue.textContent = get("rj"); }
+      if (get("wf") != null) { wobbleFreqSlider.value = get("wf"); wobbleFreqValue.textContent = get("wf"); }
+      if (get("wo") != null) { wobbleOctavesSlider.value = get("wo"); wobbleOctavesValue.textContent = get("wo"); }
+      if (get("ws") != null) { wobbleScaleSlider.value = get("ws"); wobbleScaleValue.textContent = get("ws"); }
       roundedPixelsFields.style.display = roundedPixelsCheckbox.checked ? "" : "none";
       if (get("dbg") != null) colorful.checked = get("dbg") === "1";
       document.getElementById("step-controls").style.display = colorful.checked ? "flex" : "none";
@@ -665,6 +697,9 @@
         connectDiagonals: parseFloat(connectDiagonalsSlider.value),
         diagOnly: diagOnlyCheckbox.checked,
         jiggle: parseFloat(jiggleSlider.value),
+        wobbleFreq: parseFloat(wobbleFreqSlider.value),
+        wobbleOctaves: parseInt(wobbleOctavesSlider.value),
+        wobbleScale: parseFloat(wobbleScaleSlider.value),
       });
 
       currentOutputSvg = result;
@@ -793,6 +828,18 @@
     diagOnlyCheckbox.addEventListener("change", () => redraw());
     jiggleSlider.addEventListener("input", () => {
       jiggleValue.textContent = jiggleSlider.value;
+      redraw();
+    });
+    wobbleFreqSlider.addEventListener("input", () => {
+      wobbleFreqValue.textContent = wobbleFreqSlider.value;
+      redraw();
+    });
+    wobbleOctavesSlider.addEventListener("input", () => {
+      wobbleOctavesValue.textContent = wobbleOctavesSlider.value;
+      redraw();
+    });
+    wobbleScaleSlider.addEventListener("input", () => {
+      wobbleScaleValue.textContent = wobbleScaleSlider.value;
       redraw();
     });
     const stepControls = document.getElementById("step-controls");

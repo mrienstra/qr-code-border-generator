@@ -581,6 +581,7 @@ function borderShapeElement(layout, attrs, radiusOffset = 0) {
 function generateSvg(qrPath, decorationPaths, layout, {
   bgColor = "#ffffff", bgShape = "circle", fgColor = "#000000", borderColor = "#000000",
   border2Color = null, border2Width = 4, border2Offset = 0,
+  wobbleFreq = 0, wobbleOctaves = 3, wobbleScale = 0,
 } = {}) {
   const s = fmt(layout.svgSize);
   const lines = [
@@ -591,13 +592,24 @@ function generateSvg(qrPath, decorationPaths, layout, {
   } else {
     lines.push(`  <rect width="100%" height="100%" fill="${bgColor}"/>`);
   }
+  const wobbleFilter = wobbleScale > 0 && wobbleFreq > 0;
   lines.push(
     `  <defs>`,
     `    <clipPath id="border-clip">`,
     `      ${borderShapeElement(layout, "")}`,
     `    </clipPath>`,
+  );
+  if (wobbleFilter) {
+    lines.push(
+      `    <filter id="wobble" filterUnits="userSpaceOnUse" x="0" y="0" width="${s}" height="${s}">`,
+      `      <feTurbulence type="turbulence" baseFrequency="${fmt(wobbleFreq)}" numOctaves="${wobbleOctaves}" seed="42" result="turb"/>`,
+      `      <feDisplacementMap in="SourceGraphic" in2="turb" scale="${fmt(wobbleScale)}" xChannelSelector="R" yChannelSelector="G"/>`,
+      `    </filter>`,
+    );
+  }
+  lines.push(
     `  </defs>`,
-    `  <g clip-path="url(#border-clip)">`,
+    `  <g clip-path="url(#border-clip)"${wobbleFilter ? ' filter="url(#wobble)"' : ''}>`,
     `    <path data-step="0" d="${qrPath}" fill="${fgColor}"/>`,
   );
   for (const [label, pathD, color, step] of decorationPaths) {
@@ -645,6 +657,9 @@ export function generate(svgText, {
   connectDiagonals = 0,
   diagOnly = false,
   jiggle = 0,
+  wobbleFreq = 0,
+  wobbleOctaves = 3,
+  wobbleScale = 0,
 } = {}) {
   let { squares: qr, qrSize } = parseQr(svgText);
   if (obfuscate) {
@@ -906,7 +921,7 @@ export function generate(svgText, {
     }
   }
 
-  return generateSvg(qrPath, decorationPaths, layout, { bgColor, bgShape, fgColor, borderColor, border2Color, border2Width, border2Offset });
+  return generateSvg(qrPath, decorationPaths, layout, { bgColor, bgShape, fgColor, borderColor, border2Color, border2Width, border2Offset, wobbleFreq, wobbleOctaves, wobbleScale });
 }
 
 // --- Node CLI ---
