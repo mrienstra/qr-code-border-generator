@@ -21,7 +21,10 @@ const DEBUG_PALETTE = {
 };
 
 // --- Coordinate helpers (Set<string> since JS Sets lack tuple equality) ---
-const key = (c, r) => `${c},${r}`;
+// Snap to 6 decimal places to avoid IEEE 754 precision mismatches at
+// exponent boundaries (e.g. 31.279999999999998 vs 31.28 when crossing 32).
+const snap = (v) => Math.round(v * 1e6) / 1e6;
+const key = (c, r) => `${snap(c)},${snap(r)}`;
 const unkey = (k) => { const i = k.indexOf(","); return [Number(k.slice(0, i)), Number(k.slice(i + 1))]; };
 
 // --- Core functions ---
@@ -197,7 +200,7 @@ function squaresToPath(squares) {
   }).join(" ");
 }
 
-function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagonals = false) {
+function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagonals = false, diagOnly = false) {
   const sorted = [...squares].map(unkey).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
   // Outer corner formatting
   const ro = rOuter;
@@ -213,6 +216,11 @@ function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagona
     const hasR = allPixels.has(key(x + 1, y));
     const hasU = allPixels.has(key(x, y - 1));
     const hasD = allPixels.has(key(x, y + 1));
+    // Diagonal occupancy (used to suppress outer corner rounding)
+    const hasTL = allPixels.has(key(x - 1, y - 1));
+    const hasTR = allPixels.has(key(x + 1, y - 1));
+    const hasBR = allPixels.has(key(x + 1, y + 1));
+    const hasBL = allPixels.has(key(x - 1, y + 1));
     // Diagonal connection decisions. connectDiagonals (0–5) controls how
     // aggressively to bridge diagonal pairs. Each pair is scored by the sum
     // of remaining cardinal neighbors (0–4); lower sum = more isolated.
@@ -233,29 +241,31 @@ function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagona
         }
         return false;
       }
-      if (!hasL && !hasU && allPixels.has(key(x - 1, y - 1))) {
+      if (!hasL && !hasU && hasTL) {
         const rem = (allPixels.has(key(x - 2, y - 1)) ? 1 : 0) + (allPixels.has(key(x - 1, y - 2)) ? 1 : 0);
         diagTL = shouldConnect(rem, x, y);
       }
-      if (!hasR && !hasU && allPixels.has(key(x + 1, y - 1))) {
+      if (!hasR && !hasU && hasTR) {
         const rem = (allPixels.has(key(x + 2, y - 1)) ? 1 : 0) + (allPixels.has(key(x + 1, y - 2)) ? 1 : 0);
         diagTR = shouldConnect(rem, x + 1, y);
       }
-      if (!hasR && !hasD && allPixels.has(key(x + 1, y + 1))) {
+      if (!hasR && !hasD && hasBR) {
         const rem = (allPixels.has(key(x + 2, y + 1)) ? 1 : 0) + (allPixels.has(key(x + 1, y + 2)) ? 1 : 0);
         diagBR = shouldConnect(rem, x + 1, y + 1);
       }
-      if (!hasL && !hasD && allPixels.has(key(x - 1, y + 1))) {
+      if (!hasL && !hasD && hasBL) {
         const rem = (allPixels.has(key(x - 2, y + 1)) ? 1 : 0) + (allPixels.has(key(x - 1, y + 2)) ? 1 : 0);
         diagBL = shouldConnect(rem, x, y + 1);
       }
     }
-    // A corner is rounded only when both adjacent cardinals are absent AND
-    // no diagonal connection exists at that corner.
-    const tl = ro > 0 && !hasL && !hasU && !diagTL;
-    const tr = ro > 0 && !hasR && !hasU && !diagTR;
-    const br = ro > 0 && !hasR && !hasD && !diagBR;
-    const bl = ro > 0 && !hasL && !hasD && !diagBL;
+    // A corner is rounded when both adjacent cardinals are absent.
+    // diagOnly mode additionally requires the diagonal to be absent
+    // (the full 2×2 corner is empty). Otherwise, only diagonal bridge
+    // connections suppress rounding.
+    const tl = ro > 0 && !hasL && !hasU && !(diagOnly ? hasTL : diagTL);
+    const tr = ro > 0 && !hasR && !hasU && !(diagOnly ? hasTR : diagTR);
+    const br = ro > 0 && !hasR && !hasD && !(diagOnly ? hasBR : diagBR);
+    const bl = ro > 0 && !hasL && !hasD && !(diagOnly ? hasBL : diagBL);
     // Outer corners: rounded pixel outline
     let path;
     if (!tl && !tr && !br && !bl) {
@@ -583,6 +593,7 @@ export function generate(svgText, {
   roundedPixels = 0,
   roundedInner = 0,
   connectDiagonals = 0,
+  diagOnly = false,
 } = {}) {
   let { squares: qr, qrSize } = parseQr(svgText);
   if (obfuscate) {
@@ -770,7 +781,63 @@ export function generate(svgText, {
     for (const [, group] of allGroups)
       for (const [, squares] of group)
         for (const k of squares) allPixels.add(k);
-    toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals);
+    toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, diagOnly);
+
+    // Diagnostic: check for adjacency mismatches (floating-point key issues)
+    if (colorful) {
+      const qrO = layout.qrOrigin;
+      let issues = 0;
+      for (const k of allPixels) {
+        const [x, y] = unkey(k);
+        // Check all 4 cardinal neighbors: if a pixel exists at (x±1,y) or (x,y±1),
+        // verify the adjacency is symmetric (neighbor's reverse lookup finds us)
+        for (const [dx, dy, dir] of [[1,0,'R'],[-1,0,'L'],[0,1,'D'],[0,-1,'U']]) {
+          const nk = key(x + dx, y + dy);
+          if (allPixels.has(nk)) {
+            const [nx, ny] = unkey(nk);
+            const backKey = key(nx - dx, ny - dy);
+            if (backKey !== k) {
+              const gx = Math.round(x - qrO), gy = Math.round(y - qrO);
+              console.warn(`ADJACENCY MISMATCH at grid (${gx},${gy}) dir=${dir}: key=${k} → neighbor=${nk} → back=${backKey} (expected ${k})`);
+              issues++;
+            }
+          }
+        }
+        // Also check: does re-keying our own coords match?
+        const reKey = key(x, y);
+        if (reKey !== k) {
+          const gx = Math.round(x - qrO), gy = Math.round(y - qrO);
+          console.warn(`KEY ROUND-TRIP MISMATCH at grid (${gx},${gy}): stored=${k} reKey=${reKey}`);
+          issues++;
+        }
+      }
+      // Check for near-miss adjacencies: pixels that are ~1 apart but whose
+      // snapped keys don't match as neighbors. Only reports issues that snap()
+      // can't fix (gaps > 1e-4 off from 1.0).
+      const byRow = new Map();
+      for (const k of allPixels) {
+        const [x, y] = unkey(k);
+        const yk = String(y);
+        if (!byRow.has(yk)) byRow.set(yk, []);
+        byRow.get(yk).push([x, k]);
+      }
+      for (const [yk, row] of byRow) {
+        row.sort((a, b) => a[0] - b[0]);
+        for (let i = 0; i < row.length - 1; i++) {
+          const [x1, k1] = row[i];
+          const [x2, k2] = row[i + 1];
+          const gap = x2 - x1;
+          if (gap > 0.999 && gap < 1.001 && Math.abs(gap - 1) > 1e-4) {
+            const gx1 = Math.round(x1 - qrO), gx2 = Math.round(x2 - qrO);
+            const gy = Math.round(Number(yk) - qrO);
+            console.warn(`NEAR-MISS at row ${gy}: grid cols ${gx1}→${gx2}, gap=${gap} (keys: ${k1} → ${k2})`);
+            issues++;
+          }
+        }
+      }
+      if (issues > 0) console.warn(`Found ${issues} adjacency issues`);
+      else console.log('Adjacency check: no issues found');
+    }
   }
 
   const qrPath = toPath(qrSvg);
