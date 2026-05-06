@@ -308,9 +308,12 @@
                 <span class="range-value" id="rounded-inner-value">0.3</span>
               </div>
             </div>
-            <div class="checkbox-row">
-              <input type="checkbox" id="connect-diagonals">
-              <label for="connect-diagonals">Connect diagonals</label>
+            <div class="field">
+              <label>Connect diagonals</label>
+              <div class="field-row">
+                <input type="range" id="connect-diagonals" min="0" max="5" step="0.5" value="0">
+                <span class="range-value" id="connect-diagonals-value">Off</span>
+              </div>
             </div>
           </div>
           <div class="checkbox-row">
@@ -412,7 +415,14 @@
     const roundedRadiusValue = document.getElementById("rounded-radius-value");
     const roundedInner = document.getElementById("rounded-inner");
     const roundedInnerValue = document.getElementById("rounded-inner-value");
-    const connectDiagonalsCheckbox = document.getElementById("connect-diagonals");
+    const connectDiagonalsSlider = document.getElementById("connect-diagonals");
+    const connectDiagonalsValue = document.getElementById("connect-diagonals-value");
+    function cdLabel(v) {
+      const n = parseFloat(v);
+      if (n === 0) return 'Off';
+      if (n >= 5) return 'All';
+      return n;
+    }
     const colorful = document.getElementById("colorful");
     const previewSvg = document.getElementById("preview-svg");
     const statsEl = document.getElementById("stats");
@@ -512,7 +522,7 @@
         rp: roundedPixelsCheckbox.checked ? "1" : "0",
         rpr: roundedRadius.value,
         rpri: roundedInner.value,
-        cd: connectDiagonalsCheckbox.checked ? "1" : "0",
+        cd: connectDiagonalsSlider.value,
         dbg: colorful.checked ? "1" : "0",
       };
       const params = new URLSearchParams();
@@ -585,7 +595,7 @@
       if (get("rp") != null) roundedPixelsCheckbox.checked = get("rp") === "1";
       if (get("rpr") != null) { roundedRadius.value = get("rpr"); roundedRadiusValue.textContent = parseFloat(get("rpr")).toFixed(2); }
       if (get("rpri") != null) { roundedInner.value = get("rpri"); roundedInnerValue.textContent = parseFloat(get("rpri")).toFixed(2); }
-      if (get("cd") != null) connectDiagonalsCheckbox.checked = get("cd") === "1";
+      if (get("cd") != null) { connectDiagonalsSlider.value = get("cd"); connectDiagonalsValue.textContent = cdLabel(get("cd")); }
       roundedPixelsFields.style.display = roundedPixelsCheckbox.checked ? "" : "none";
       if (get("dbg") != null) colorful.checked = get("dbg") === "1";
       document.getElementById("step-controls").style.display = colorful.checked ? "flex" : "none";
@@ -634,7 +644,7 @@
         } : null,
         roundedPixels: roundedPixelsCheckbox.checked ? parseFloat(roundedRadius.value) : 0,
         roundedInner: roundedPixelsCheckbox.checked ? parseFloat(roundedInner.value) : 0,
-        connectDiagonals: connectDiagonalsCheckbox.checked,
+        connectDiagonals: parseFloat(connectDiagonalsSlider.value),
       });
 
       currentOutputSvg = result;
@@ -756,7 +766,10 @@
       roundedInnerValue.textContent = parseFloat(roundedInner.value).toFixed(2);
       redraw();
     });
-    connectDiagonalsCheckbox.addEventListener("change", redraw);
+    connectDiagonalsSlider.addEventListener("input", () => {
+      connectDiagonalsValue.textContent = cdLabel(connectDiagonalsSlider.value);
+      redraw();
+    });
     const stepControls = document.getElementById("step-controls");
     colorful.addEventListener("change", () => {
       stepControls.style.display = colorful.checked ? "flex" : "none";

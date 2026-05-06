@@ -213,12 +213,48 @@ function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagona
     const hasR = allPixels.has(key(x + 1, y));
     const hasU = allPixels.has(key(x, y - 1));
     const hasD = allPixels.has(key(x, y + 1));
+    // Diagonal connection decisions. connectDiagonals (0–5) controls how
+    // aggressively to bridge diagonal pairs. Each pair is scored by the sum
+    // of remaining cardinal neighbors (0–4); lower sum = more isolated.
+    // The slider value minus 1 gives the max allowed sum. Half-steps include
+    // ~50% of the next sum level via a deterministic hash on the vertex.
+    const remCurrent = (hasL ? 1 : 0) + (hasR ? 1 : 0) + (hasU ? 1 : 0) + (hasD ? 1 : 0);
+    let diagTL = false, diagTR = false, diagBR = false, diagBL = false;
+    if (connectDiagonals > 0) {
+      const threshold = connectDiagonals - 1; // -0.5 to 4
+      const tFloor = Math.floor(threshold);
+      const isHalf = threshold !== tFloor;
+      function shouldConnect(remOther, vx, vy) {
+        const sum = remCurrent + remOther;
+        if (sum <= tFloor) return true;
+        if (isHalf && sum === tFloor + 1) {
+          return ((vx * 3 + vy * 7) & 1) === 0;
+        }
+        return false;
+      }
+      if (!hasL && !hasU && allPixels.has(key(x - 1, y - 1))) {
+        const rem = (allPixels.has(key(x - 2, y - 1)) ? 1 : 0) + (allPixels.has(key(x - 1, y - 2)) ? 1 : 0);
+        diagTL = shouldConnect(rem, x, y);
+      }
+      if (!hasR && !hasU && allPixels.has(key(x + 1, y - 1))) {
+        const rem = (allPixels.has(key(x + 2, y - 1)) ? 1 : 0) + (allPixels.has(key(x + 1, y - 2)) ? 1 : 0);
+        diagTR = shouldConnect(rem, x + 1, y);
+      }
+      if (!hasR && !hasD && allPixels.has(key(x + 1, y + 1))) {
+        const rem = (allPixels.has(key(x + 2, y + 1)) ? 1 : 0) + (allPixels.has(key(x + 1, y + 2)) ? 1 : 0);
+        diagBR = shouldConnect(rem, x + 1, y + 1);
+      }
+      if (!hasL && !hasD && allPixels.has(key(x - 1, y + 1))) {
+        const rem = (allPixels.has(key(x - 2, y + 1)) ? 1 : 0) + (allPixels.has(key(x - 1, y + 2)) ? 1 : 0);
+        diagBL = shouldConnect(rem, x, y + 1);
+      }
+    }
     // A corner is rounded only when both adjacent cardinals are absent AND
-    // (if connectDiagonals is on) no diagonal pixel exists at that corner.
-    const tl = ro > 0 && !hasL && !hasU && !(connectDiagonals && allPixels.has(key(x - 1, y - 1)));
-    const tr = ro > 0 && !hasR && !hasU && !(connectDiagonals && allPixels.has(key(x + 1, y - 1)));
-    const br = ro > 0 && !hasR && !hasD && !(connectDiagonals && allPixels.has(key(x + 1, y + 1)));
-    const bl = ro > 0 && !hasL && !hasD && !(connectDiagonals && allPixels.has(key(x - 1, y + 1)));
+    // no diagonal connection exists at that corner.
+    const tl = ro > 0 && !hasL && !hasU && !diagTL;
+    const tr = ro > 0 && !hasR && !hasU && !diagTR;
+    const br = ro > 0 && !hasR && !hasD && !diagBR;
+    const bl = ro > 0 && !hasL && !hasD && !diagBL;
     // Outer corners: rounded pixel outline
     let path;
     if (!tl && !tr && !br && !bl) {
@@ -268,18 +304,15 @@ function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagona
         path += ` M${fmt(x - ri)},${fmt(y + 1)}q${rif},0,${rif},${rif}v${nrif}z`;
       }
     }
-    // Diagonal connections: bridge two diagonally adjacent pixels when both
-    // shared cardinal neighbors are absent (checkerboard pattern). Two Bézier
-    // fillets create a smooth pinch at the shared vertex.
-    // Only check downward diagonals (BR, BL) to avoid duplication.
-    if (connectDiagonals && ri > 0) {
-      if (!hasR && !hasD && allPixels.has(key(x + 1, y + 1))) {
-        // BR diagonal at vertex (x+1, y+1)
+    // Diagonal connections: bridge two diagonally adjacent pixels with two
+    // Bézier fillets at the shared vertex. Only emit downward (BR, BL)
+    // fillets to avoid duplication — the other pixel handles its half.
+    if (ri > 0) {
+      if (diagBR) {
         path += ` M${fmt(x + 1)},${fmt(y + 1 - ri)}q0,${rif},${rif},${rif}h${nrif}z`;
         path += ` M${fmt(x + 1 - ri)},${fmt(y + 1)}q${rif},0,${rif},${rif}v${nrif}z`;
       }
-      if (!hasL && !hasD && allPixels.has(key(x - 1, y + 1))) {
-        // BL diagonal at vertex (x, y+1)
+      if (diagBL) {
         path += ` M${fmt(x)},${fmt(y + 1 - ri)}q0,${rif},${nrif},${rif}h${rif}z`;
         path += ` M${fmt(x + ri)},${fmt(y + 1)}q${nrif},0,${nrif},${rif}v${nrif}z`;
       }
@@ -548,7 +581,7 @@ export function generate(svgText, {
   obfuscate = null,
   roundedPixels = 0,
   roundedInner = 0,
-  connectDiagonals = false,
+  connectDiagonals = 0,
 } = {}) {
   let { squares: qr, qrSize } = parseQr(svgText);
   if (obfuscate) {
