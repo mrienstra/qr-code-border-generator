@@ -216,19 +216,20 @@ function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagona
     // Diagonal connection decisions. connectDiagonals (0–5) controls how
     // aggressively to bridge diagonal pairs. Each pair is scored by the sum
     // of remaining cardinal neighbors (0–4); lower sum = more isolated.
-    // The slider value minus 1 gives the max allowed sum. Half-steps include
-    // ~50% of the next sum level via a deterministic hash on the vertex.
+    // The slider value minus 1 gives the max allowed sum. Fractional steps
+    // (0.25 increments) include 25/50/75% of the next sum level via a
+    // deterministic hash on the vertex position.
     const remCurrent = (hasL ? 1 : 0) + (hasR ? 1 : 0) + (hasU ? 1 : 0) + (hasD ? 1 : 0);
     let diagTL = false, diagTR = false, diagBR = false, diagBL = false;
     if (connectDiagonals > 0) {
-      const threshold = connectDiagonals - 1; // -0.5 to 4
+      const threshold = connectDiagonals - 1;
       const tFloor = Math.floor(threshold);
-      const isHalf = threshold !== tFloor;
+      const frac = threshold - tFloor;
       function shouldConnect(remOther, vx, vy) {
         const sum = remCurrent + remOther;
         if (sum <= tFloor) return true;
-        if (isHalf && sum === tFloor + 1) {
-          return ((vx * 3 + vy * 7) & 1) === 0;
+        if (frac > 0 && sum === tFloor + 1) {
+          return ((vx * 3 + vy * 7) % 4) < (frac * 4);
         }
         return false;
       }
