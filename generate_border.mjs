@@ -197,6 +197,47 @@ function squaresToPath(squares) {
   }).join(" ");
 }
 
+function squaresToRoundedPath(squares, allPixels, r) {
+  const sorted = [...squares].map(unkey).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+  const rf = fmt(r);
+  const af = `a${rf},${rf},0,0,1,`;
+  return sorted.map(([x, y]) => {
+    const hasL = allPixels.has(key(x - 1, y));
+    const hasR = allPixels.has(key(x + 1, y));
+    const hasU = allPixels.has(key(x, y - 1));
+    const hasD = allPixels.has(key(x, y + 1));
+    const tl = !hasL && !hasU;
+    const tr = !hasR && !hasU;
+    const br = !hasR && !hasD;
+    const bl = !hasL && !hasD;
+    if (!tl && !tr && !br && !bl) {
+      const xf = fmt(x), yf = fmt(y);
+      return `M${xf},${yf}h1v1h-1z`;
+    }
+    const p = [];
+    // Start: top-left area
+    p.push(`M${fmt(x + (tl ? r : 0))},${fmt(y)}`);
+    // Top edge → TR
+    const topLen = 1 - (tl ? r : 0) - (tr ? r : 0);
+    if (topLen > 0) p.push(`h${fmt(topLen)}`);
+    if (tr) p.push(`${af}${rf},${rf}`);
+    // Right edge → BR
+    const rightLen = 1 - (tr ? r : 0) - (br ? r : 0);
+    if (rightLen > 0) p.push(`v${fmt(rightLen)}`);
+    if (br) p.push(`${af}${fmt(-r)},${rf}`);
+    // Bottom edge → BL
+    const bottomLen = 1 - (br ? r : 0) - (bl ? r : 0);
+    if (bottomLen > 0) p.push(`h${fmt(-bottomLen)}`);
+    if (bl) p.push(`${af}${fmt(-r)},${fmt(-r)}`);
+    // Left edge → TL
+    const leftLen = 1 - (bl ? r : 0) - (tl ? r : 0);
+    if (leftLen > 0) p.push(`v${fmt(-leftLen)}`);
+    if (tl) p.push(`${af}${rf},${fmt(-r)}`);
+    p.push('z');
+    return p.join('');
+  }).join(" ");
+}
+
 function flipVertical(squares, qrSize) {
   const result = new Set();
   for (const k of squares) { const [c, r] = unkey(k); result.add(key(c, qrSize - 1 - r)); }
@@ -455,6 +496,7 @@ export function generate(svgText, {
   randAlign = false,
   randFluff = false,
   obfuscate = null,
+  roundedPixels = 0,
 } = {}) {
   let { squares: qr, qrSize } = parseQr(svgText);
   if (obfuscate) {
@@ -479,7 +521,6 @@ export function generate(svgText, {
   const repsAsymNoInset = Math.max(1, Math.ceil((layout.qrOrigin - margin) / stepNoInset));
 
   const qrSvg = offsetToSvg(qr, layout.qrOrigin, layout.qrOrigin);
-  const qrPath = squaresToPath(qrSvg);
 
   // Determine fluff source
   let fluffQr;
@@ -636,6 +677,18 @@ export function generate(svgText, {
     }
   }
 
+  // Build path converter (rounded or standard)
+  let toPath = squaresToPath;
+  if (roundedPixels > 0) {
+    const allPixels = new Set(qrSvg);
+    for (const [, group] of allGroups)
+      for (const [, squares] of group)
+        for (const k of squares) allPixels.add(k);
+    toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels);
+  }
+
+  const qrPath = toPath(qrSvg);
+
   const decorationPaths = [];
   for (const [groupName, group] of allGroups) {
     const palette = colorful ? DEBUG_PALETTE[groupName] : null;
@@ -645,7 +698,7 @@ export function generate(svgText, {
       // Step: 0=QR, 1=center reflections, 2+=flanking rep N
       const repMatch = label.match(/:(\d+)$/);
       const step = repMatch ? parseInt(repMatch[1]) + 1 : 1;
-      decorationPaths.push([label, squaresToPath(svgSquares), color, step]);
+      decorationPaths.push([label, toPath(svgSquares), color, step]);
     }
   }
 

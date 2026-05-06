@@ -290,6 +290,19 @@
             </div>
           </div>
           <div class="checkbox-row">
+            <input type="checkbox" id="rounded-pixels">
+            <label for="rounded-pixels">Rounded pixels</label>
+          </div>
+          <div id="rounded-pixels-fields" style="display:none">
+            <div class="field">
+              <label>Radius</label>
+              <div class="field-row">
+                <input type="range" id="rounded-radius" min="0.05" max="0.5" step="0.01" value="0.3">
+                <span class="range-value" id="rounded-radius-value">0.3</span>
+              </div>
+            </div>
+          </div>
+          <div class="checkbox-row">
             <input type="checkbox" id="colorful">
             <label for="colorful">Debug (colorful)</label>
           </div>
@@ -382,6 +395,10 @@
     const obfDarkOnly = document.getElementById("obf-dark-only");
     const obfBorder = document.getElementById("obf-border");
     const obfTint = document.getElementById("obf-tint");
+    const roundedPixelsCheckbox = document.getElementById("rounded-pixels");
+    const roundedPixelsFields = document.getElementById("rounded-pixels-fields");
+    const roundedRadius = document.getElementById("rounded-radius");
+    const roundedRadiusValue = document.getElementById("rounded-radius-value");
     const colorful = document.getElementById("colorful");
     const previewSvg = document.getElementById("preview-svg");
     const statsEl = document.getElementById("stats");
@@ -448,7 +465,9 @@
       b2: "0", b2c: "ffffff", b2a: "1", b2w: "4", b2o: "0", b2t: "0",
       bg: "ffffff", bga: "1", bgs: "circle", gap: "1", fgap: "1", shuf: "0", ra: "1", rf: "0",
       obf: "0", otl: "0", otr: "0", obl: "0", oal: "0", oeo: "0",
-      obd: "0", obt: "rgba(0,0,30,0.1)", dbg: "0",
+      obd: "0", obt: "rgba(0,0,30,0.1)",
+      rp: "0", rpr: "0.3",
+      dbg: "0",
     };
 
     function saveToUrl() {
@@ -476,6 +495,8 @@
         oeo: obfDarkOnly.checked ? "1" : "0",
         obd: obfBorder.checked ? "1" : "0",
         obt: obfTint.value,
+        rp: roundedPixelsCheckbox.checked ? "1" : "0",
+        rpr: roundedRadius.value,
         dbg: colorful.checked ? "1" : "0",
       };
       const params = new URLSearchParams();
@@ -545,6 +566,9 @@
       if (get("obd") != null) obfBorder.checked = get("obd") === "1";
       if (get("obt") != null) obfTint.value = get("obt");
       obfuscateFields.style.display = obfuscateCheckbox.checked ? "" : "none";
+      if (get("rp") != null) roundedPixelsCheckbox.checked = get("rp") === "1";
+      if (get("rpr") != null) { roundedRadius.value = get("rpr"); roundedRadiusValue.textContent = parseFloat(get("rpr")).toFixed(2); }
+      roundedPixelsFields.style.display = roundedPixelsCheckbox.checked ? "" : "none";
       if (get("dbg") != null) colorful.checked = get("dbg") === "1";
       document.getElementById("step-controls").style.display = colorful.checked ? "flex" : "none";
     }
@@ -590,6 +614,7 @@
           amounts: [parseFloat(obfTl.value), parseFloat(obfTr.value), parseFloat(obfBl.value), parseFloat(obfAlign.value)],
           darkOnly: obfDarkOnly.checked,
         } : null,
+        roundedPixels: roundedPixelsCheckbox.checked ? parseFloat(roundedRadius.value) : 0,
       });
 
       currentOutputSvg = result;
@@ -699,6 +724,14 @@
     obfDarkOnly.addEventListener("change", redraw);
     obfBorder.addEventListener("change", () => { setupSolverOverlay(); saveToUrl(); });
     obfTint.addEventListener("input", () => { setupSolverOverlay(); saveToUrl(); });
+    roundedPixelsCheckbox.addEventListener("change", () => {
+      roundedPixelsFields.style.display = roundedPixelsCheckbox.checked ? "" : "none";
+      redraw();
+    });
+    roundedRadius.addEventListener("input", () => {
+      roundedRadiusValue.textContent = parseFloat(roundedRadius.value).toFixed(2);
+      redraw();
+    });
     const stepControls = document.getElementById("step-controls");
     colorful.addEventListener("change", () => {
       stepControls.style.display = colorful.checked ? "flex" : "none";
