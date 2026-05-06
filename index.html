@@ -295,10 +295,17 @@
           </div>
           <div id="rounded-pixels-fields" style="display:none">
             <div class="field">
-              <label>Radius</label>
+              <label>Outer radius</label>
               <div class="field-row">
-                <input type="range" id="rounded-radius" min="0.05" max="0.5" step="0.01" value="0.3">
+                <input type="range" id="rounded-radius" min="0" max="0.5" step="0.01" value="0.3">
                 <span class="range-value" id="rounded-radius-value">0.3</span>
+              </div>
+            </div>
+            <div class="field">
+              <label>Inner radius</label>
+              <div class="field-row">
+                <input type="range" id="rounded-inner" min="0" max="0.5" step="0.01" value="0.3">
+                <span class="range-value" id="rounded-inner-value">0.3</span>
               </div>
             </div>
             <div class="checkbox-row">
@@ -403,6 +410,8 @@
     const roundedPixelsFields = document.getElementById("rounded-pixels-fields");
     const roundedRadius = document.getElementById("rounded-radius");
     const roundedRadiusValue = document.getElementById("rounded-radius-value");
+    const roundedInner = document.getElementById("rounded-inner");
+    const roundedInnerValue = document.getElementById("rounded-inner-value");
     const connectDiagonalsCheckbox = document.getElementById("connect-diagonals");
     const colorful = document.getElementById("colorful");
     const previewSvg = document.getElementById("preview-svg");
@@ -471,7 +480,7 @@
       bg: "ffffff", bga: "1", bgs: "circle", gap: "1", fgap: "1", shuf: "0", ra: "1", rf: "0",
       obf: "0", otl: "0", otr: "0", obl: "0", oal: "0", oeo: "0",
       obd: "0", obt: "rgba(0,0,30,0.1)",
-      rp: "0", rpr: "0.3", cd: "0",
+      rp: "0", rpr: "0.3", rpri: "0.3", cd: "0",
       dbg: "0",
     };
 
@@ -502,6 +511,7 @@
         obt: obfTint.value,
         rp: roundedPixelsCheckbox.checked ? "1" : "0",
         rpr: roundedRadius.value,
+        rpri: roundedInner.value,
         cd: connectDiagonalsCheckbox.checked ? "1" : "0",
         dbg: colorful.checked ? "1" : "0",
       };
@@ -574,6 +584,7 @@
       obfuscateFields.style.display = obfuscateCheckbox.checked ? "" : "none";
       if (get("rp") != null) roundedPixelsCheckbox.checked = get("rp") === "1";
       if (get("rpr") != null) { roundedRadius.value = get("rpr"); roundedRadiusValue.textContent = parseFloat(get("rpr")).toFixed(2); }
+      if (get("rpri") != null) { roundedInner.value = get("rpri"); roundedInnerValue.textContent = parseFloat(get("rpri")).toFixed(2); }
       if (get("cd") != null) connectDiagonalsCheckbox.checked = get("cd") === "1";
       roundedPixelsFields.style.display = roundedPixelsCheckbox.checked ? "" : "none";
       if (get("dbg") != null) colorful.checked = get("dbg") === "1";
@@ -622,6 +633,7 @@
           darkOnly: obfDarkOnly.checked,
         } : null,
         roundedPixels: roundedPixelsCheckbox.checked ? parseFloat(roundedRadius.value) : 0,
+        roundedInner: roundedPixelsCheckbox.checked ? parseFloat(roundedInner.value) : 0,
         connectDiagonals: connectDiagonalsCheckbox.checked,
       });
 
@@ -738,6 +750,10 @@
     });
     roundedRadius.addEventListener("input", () => {
       roundedRadiusValue.textContent = parseFloat(roundedRadius.value).toFixed(2);
+      redraw();
+    });
+    roundedInner.addEventListener("input", () => {
+      roundedInnerValue.textContent = parseFloat(roundedInner.value).toFixed(2);
       redraw();
     });
     connectDiagonalsCheckbox.addEventListener("change", redraw);
