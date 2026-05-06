@@ -197,44 +197,86 @@ function squaresToPath(squares) {
   }).join(" ");
 }
 
-function squaresToRoundedPath(squares, allPixels, r) {
+function squaresToRoundedPath(squares, allPixels, r, connectDiagonals = false) {
   const sorted = [...squares].map(unkey).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
   const rf = fmt(r);
+  const nrf = fmt(-r);
   const af = `a${rf},${rf},0,0,1,`;
   return sorted.map(([x, y]) => {
     const hasL = allPixels.has(key(x - 1, y));
     const hasR = allPixels.has(key(x + 1, y));
     const hasU = allPixels.has(key(x, y - 1));
     const hasD = allPixels.has(key(x, y + 1));
-    const tl = !hasL && !hasU;
-    const tr = !hasR && !hasU;
-    const br = !hasR && !hasD;
-    const bl = !hasL && !hasD;
+    // A corner is rounded only when both adjacent cardinals are absent AND
+    // (if connectDiagonals is on) no diagonal pixel exists at that corner.
+    const tl = !hasL && !hasU && !(connectDiagonals && allPixels.has(key(x - 1, y - 1)));
+    const tr = !hasR && !hasU && !(connectDiagonals && allPixels.has(key(x + 1, y - 1)));
+    const br = !hasR && !hasD && !(connectDiagonals && allPixels.has(key(x + 1, y + 1)));
+    const bl = !hasL && !hasD && !(connectDiagonals && allPixels.has(key(x - 1, y + 1)));
+    // Outer corners: rounded pixel outline
+    let path;
     if (!tl && !tr && !br && !bl) {
-      const xf = fmt(x), yf = fmt(y);
-      return `M${xf},${yf}h1v1h-1z`;
+      path = `M${fmt(x)},${fmt(y)}h1v1h-1z`;
+    } else {
+      const p = [];
+      // Start: top-left area
+      p.push(`M${fmt(x + (tl ? r : 0))},${fmt(y)}`);
+      // Top edge → TR
+      const topLen = 1 - (tl ? r : 0) - (tr ? r : 0);
+      if (topLen > 0) p.push(`h${fmt(topLen)}`);
+      if (tr) p.push(`${af}${rf},${rf}`);
+      // Right edge → BR
+      const rightLen = 1 - (tr ? r : 0) - (br ? r : 0);
+      if (rightLen > 0) p.push(`v${fmt(rightLen)}`);
+      if (br) p.push(`${af}${nrf},${rf}`);
+      // Bottom edge → BL
+      const bottomLen = 1 - (br ? r : 0) - (bl ? r : 0);
+      if (bottomLen > 0) p.push(`h${fmt(-bottomLen)}`);
+      if (bl) p.push(`${af}${nrf},${nrf}`);
+      // Left edge → TL
+      const leftLen = 1 - (bl ? r : 0) - (tl ? r : 0);
+      if (leftLen > 0) p.push(`v${fmt(-leftLen)}`);
+      if (tl) p.push(`${af}${rf},${nrf}`);
+      p.push('z');
+      path = p.join('');
     }
-    const p = [];
-    // Start: top-left area
-    p.push(`M${fmt(x + (tl ? r : 0))},${fmt(y)}`);
-    // Top edge → TR
-    const topLen = 1 - (tl ? r : 0) - (tr ? r : 0);
-    if (topLen > 0) p.push(`h${fmt(topLen)}`);
-    if (tr) p.push(`${af}${rf},${rf}`);
-    // Right edge → BR
-    const rightLen = 1 - (tr ? r : 0) - (br ? r : 0);
-    if (rightLen > 0) p.push(`v${fmt(rightLen)}`);
-    if (br) p.push(`${af}${fmt(-r)},${rf}`);
-    // Bottom edge → BL
-    const bottomLen = 1 - (br ? r : 0) - (bl ? r : 0);
-    if (bottomLen > 0) p.push(`h${fmt(-bottomLen)}`);
-    if (bl) p.push(`${af}${fmt(-r)},${fmt(-r)}`);
-    // Left edge → TL
-    const leftLen = 1 - (bl ? r : 0) - (tl ? r : 0);
-    if (leftLen > 0) p.push(`v${fmt(-leftLen)}`);
-    if (tl) p.push(`${af}${rf},${fmt(-r)}`);
-    p.push('z');
-    return p.join('');
+    // Inner corners: fill smooth Bézier transitions at concave vertices
+    // where diagonal is absent but both adjacent cardinals are present
+    // (L-shape junction). Quadratic Bézier smoothly transitions between
+    // the two edge directions, filling the curved triangle at the corner.
+    if (hasL && hasU && !allPixels.has(key(x - 1, y - 1))) {
+      // TL inner at vertex (x, y)
+      path += ` M${fmt(x)},${fmt(y - r)}q0,${rf},${nrf},${rf}h${rf}z`;
+    }
+    if (hasR && hasU && !allPixels.has(key(x + 1, y - 1))) {
+      // TR inner at vertex (x+1, y)
+      path += ` M${fmt(x + 1 + r)},${fmt(y)}q${nrf},0,${nrf},${nrf}v${rf}z`;
+    }
+    if (hasR && hasD && !allPixels.has(key(x + 1, y + 1))) {
+      // BR inner at vertex (x+1, y+1)
+      path += ` M${fmt(x + 1)},${fmt(y + 1 + r)}q0,${nrf},${rf},${nrf}h${nrf}z`;
+    }
+    if (hasL && hasD && !allPixels.has(key(x - 1, y + 1))) {
+      // BL inner at vertex (x, y+1)
+      path += ` M${fmt(x - r)},${fmt(y + 1)}q${rf},0,${rf},${rf}v${nrf}z`;
+    }
+    // Diagonal connections: bridge two diagonally adjacent pixels when both
+    // shared cardinal neighbors are absent (checkerboard pattern). Two Bézier
+    // fillets create a smooth pinch at the shared vertex.
+    // Only check downward diagonals (BR, BL) to avoid duplication.
+    if (connectDiagonals) {
+      if (!hasR && !hasD && allPixels.has(key(x + 1, y + 1))) {
+        // BR diagonal at vertex (x+1, y+1)
+        path += ` M${fmt(x + 1)},${fmt(y + 1 - r)}q0,${rf},${rf},${rf}h${nrf}z`;
+        path += ` M${fmt(x + 1 - r)},${fmt(y + 1)}q${rf},0,${rf},${rf}v${nrf}z`;
+      }
+      if (!hasL && !hasD && allPixels.has(key(x - 1, y + 1))) {
+        // BL diagonal at vertex (x, y+1)
+        path += ` M${fmt(x)},${fmt(y + 1 - r)}q0,${rf},${nrf},${rf}h${rf}z`;
+        path += ` M${fmt(x + r)},${fmt(y + 1)}q${nrf},0,${nrf},${rf}v${nrf}z`;
+      }
+    }
+    return path;
   }).join(" ");
 }
 
@@ -497,6 +539,7 @@ export function generate(svgText, {
   randFluff = false,
   obfuscate = null,
   roundedPixels = 0,
+  connectDiagonals = false,
 } = {}) {
   let { squares: qr, qrSize } = parseQr(svgText);
   if (obfuscate) {
@@ -684,7 +727,7 @@ export function generate(svgText, {
     for (const [, group] of allGroups)
       for (const [, squares] of group)
         for (const k of squares) allPixels.add(k);
-    toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels);
+    toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels, connectDiagonals);
   }
 
   const qrPath = toPath(qrSvg);
