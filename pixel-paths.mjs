@@ -621,7 +621,10 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner) {
 
     // "right" = convex → arc with rOuter; "left" = concave → Bézier with rInner.
     // For holes, traceHoleBoundary already swapped the labels, so same logic applies.
+    // At checkerboard vertices, suppress rInner — per-pixel mode has no inner
+    // fillet there (filled pixels have convex, not concave, corners).
     function radiusAt(i) {
+      if (vertices[i].checkerboard) return 0;
       const turn = vertices[i].turn;
       if (turn === "right") return ro;
       if (turn === "left") return ri;
@@ -641,8 +644,12 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner) {
 
     p.push(`M${fmt(startX)},${fmt(startY)}`);
 
-    // Arc sweep: 1 for CW outer boundary, 0 for CCW hole boundary
-    const sweep = isHole ? 0 : 1;
+    // Arc sweep for rOuter convex corners: always 1 (CW in screen coords).
+    // For outer boundaries (CW), this curves inward toward the filled region.
+    // For hole boundaries (CCW), this also curves toward the filled region
+    // (which is on the outside of the hole). Using sweep=0 for holes would
+    // make the arc curve toward the hole interior — the wrong direction.
+    const sweep = 1;
 
     for (let i = 0; i < n; i++) {
       const r = radiusAt(i);
@@ -711,24 +718,96 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner) {
     return winding;
   }
 
+  // --- Step 6: Handle checkerboard vertices between diagonal holes ---
+  // At a checkerboard vertex (2 filled cells on one diagonal, 2 empty on the
+  // other), per-pixel mode creates rOuter arcs on the filled pixels' exposed
+  // convex corners — no rInner fillets apply since the filled pixels have no
+  // shared cardinal neighbors at that vertex.
+  //
+  // Contour mode keeps holes as separate subpaths (no stitching). At checker-
+  // board vertices on hole boundaries:
+  //  (a) Suppress rInner — the vertex should be a sharp corner, matching
+  //      per-pixel mode where no inner fillet exists.
+  //  (b) Emit separate CCW arc-notch subpaths that carve out the rOuter gap
+  //      matching the per-pixel convex arcs of the two filled pixels.
+
+  function markCheckerboardVertices(holeVerts) {
+    for (const v of holeVerts) {
+      const hasNW = allPixels.has(key(v.x - 1, v.y - 1));
+      const hasNE = allPixels.has(key(v.x, v.y - 1));
+      const hasSE = allPixels.has(key(v.x, v.y));
+      const hasSW = allPixels.has(key(v.x - 1, v.y));
+      const filled = (hasNW ? 1 : 0) + (hasNE ? 1 : 0) + (hasSE ? 1 : 0) + (hasSW ? 1 : 0);
+      if (filled === 2 && hasNW === hasSE) {
+        v.checkerboard = true;
+      }
+    }
+  }
+
+  function emitCheckerboardNotches(holeVerts, ro, emittedSet) {
+    if (ro <= 0) return "";
+    const r = ro;
+    const rf = fmt(r);
+    const nrf = fmt(-r);
+    const parts = [];
+    for (const v of holeVerts) {
+      if (!v.checkerboard) continue;
+      const vk = key(v.x, v.y);
+      if (emittedSet.has(vk)) continue;
+      emittedSet.add(vk);
+
+      const vxf = fmt(v.x), vyf = fmt(v.y);
+      const hasNW = allPixels.has(key(v.x - 1, v.y - 1));
+      const hasSE = allPixels.has(key(v.x, v.y));
+
+      if (hasNW && hasSE) {
+        // NW-SE diagonal filled: CCW notches carving into NW and SE pixels
+        // All CCW (screen) to subtract from fill — verified via shoelace test.
+        // Notch 1 (upper-left, carves BR of NW pixel):
+        //   vertex → up → arc left-down (sweep=1) → close right
+        parts.push(`M${vxf},${vyf}L${vxf},${fmt(v.y - r)}a${rf},${rf},0,0,1,${nrf},${rf}Z`);
+        // Notch 2 (lower-right, carves TL of SE pixel):
+        //   vertex → down → arc right-up (sweep=1) → close left
+        parts.push(`M${vxf},${vyf}L${vxf},${fmt(v.y + r)}a${rf},${rf},0,0,1,${rf},${nrf}Z`);
+      } else {
+        // NE-SW diagonal filled: CCW notches carving into NE and SW pixels
+        // Notch 1 (upper-right, carves BL of NE pixel):
+        //   vertex → right → arc up-left (sweep=1) → close down
+        parts.push(`M${vxf},${vyf}L${fmt(v.x + r)},${vyf}a${rf},${rf},0,0,1,${nrf},${nrf}Z`);
+        // Notch 2 (lower-left, carves TR of SW pixel):
+        //   vertex → left → arc down-right (sweep=1) → close up
+        parts.push(`M${vxf},${vyf}L${fmt(v.x - r)},${vyf}a${rf},${rf},0,0,1,${rf},${rf}Z`);
+      }
+    }
+    return parts.join(" ");
+  }
+
   // --- Main: assemble all components + holes ---
   const components = findComponents(squares);
   const pathParts = [];
+  const emittedNotches = new Set(); // avoid duplicate notches at shared vertices
 
   for (const comp of components) {
     const outerVerts = traceBoundary(comp);
     pathParts.push(emitPath(outerVerts, rOuter, rInner, false));
 
     const holes = findHoles(comp);
-    for (const hole of holes) {
-      // Check winding at this hole's center from the outer boundary alone.
-      // If already 0, the outer boundary handles it via a pinch point — skip.
+
+    // Filter holes that need separate subpaths (winding check)
+    const neededHoles = holes.filter(hole => {
       const testCell = hole.values().next().value;
       const [tx, ty] = unkey(testCell);
-      if (windingFromVertices(outerVerts, tx + 0.5, ty + 0.5) === 0) continue;
+      return windingFromVertices(outerVerts, tx + 0.5, ty + 0.5) !== 0;
+    });
 
+    // Emit each hole as a separate CCW subpath
+    for (const hole of neededHoles) {
       const holeVerts = traceHoleBoundary(hole);
+      markCheckerboardVertices(holeVerts);
       pathParts.push(emitPath(holeVerts, rOuter, rInner, true));
+      // Emit rOuter arc notches at checkerboard vertices
+      const notches = emitCheckerboardNotches(holeVerts, rOuter, emittedNotches);
+      if (notches) pathParts.push(notches);
     }
   }
 
