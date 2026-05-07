@@ -3,7 +3,7 @@
  * ES module — usable from Node CLI or browser import.
  */
 
-import { key, unkey, FINDER_ZONE, fmt, trimEdges, flipVertical, flipHorizontal, shift, offsetToSvg, trimCornersDiagonal, squaresToPath, squaresToRoundedPath } from "./pixel-paths.mjs";
+import { key, unkey, FINDER_ZONE, fmt, trimEdges, flipVertical, flipHorizontal, shift, offsetToSvg, trimCornersDiagonal, squaresToPath, squaresToRoundedPath, squaresToContourPath } from "./pixel-paths.mjs";
 import { parseQr, randomizeAlignmentPatterns, obfuscatePatterns, getAlignmentPositions } from "./qr-patterns.mjs";
 import { CIRCLE_RATIO, CIRCLE_MARGIN, CIRCLE_STROKE_WIDTH, computeLayout, pixelOverlapsStroke, generateSvg } from "./svg-output.mjs";
 
@@ -142,6 +142,7 @@ export function generate(svgText, {
   diagOnly = false,
   jiggle = 0,
   fullLCorners = false,
+  contourMode = false,
   wobbleFreq = 0,
   wobbleOctaves = 3,
   wobbleScale = 0,
@@ -325,14 +326,19 @@ export function generate(svgText, {
     }
   }
 
-  // Build path converter (rounded or standard)
+  // Build path converter (contour, rounded, or standard)
+  const useContour = contourMode && !connectDiagonals && !diagOnly && jiggle === 0 && !fullLCorners;
   let toPath = (sq) => ({ path: squaresToPath(sq), fillets: "" });
-  if (roundedPixels > 0 || roundedInner > 0) {
+  if (useContour || roundedPixels > 0 || roundedInner > 0) {
     const allPixels = new Set(qrSvg);
     for (const [, group] of allGroups)
       for (const [, squares] of group)
         for (const k of squares) allPixels.add(k);
-    toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, diagOnly, jiggle, fullLCorners);
+    if (useContour) {
+      toPath = (sq) => squaresToContourPath(sq, allPixels, roundedPixels, roundedInner);
+    } else {
+      toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, diagOnly, jiggle, fullLCorners);
+    }
 
     // Diagnostic: check for adjacency mismatches (floating-point key issues)
     if (colorful) {
@@ -443,6 +449,7 @@ async function cli() {
       "rand-align": { type: "boolean", default: false },
       "rand-fluff": { type: "boolean", default: false },
       "full-l-corners": { type: "boolean", default: false },
+      "contour-mode": { type: "boolean", default: false },
     },
   });
 
@@ -474,6 +481,7 @@ async function cli() {
     randAlign: values["rand-align"],
     randFluff: values["rand-fluff"],
     fullLCorners: values["full-l-corners"],
+    contourMode: values["contour-mode"],
   });
 
   writeFileSync(values.output, result);

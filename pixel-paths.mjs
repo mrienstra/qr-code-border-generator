@@ -444,3 +444,293 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
 
   return { path: paths.join(" "), fillets: "" };
 }
+
+// --- Contour tracing: one closed SVG path per connected component ---
+
+export function squaresToContourPath(squares, allPixels, rOuter, rInner) {
+  if (squares.size === 0) return { path: "", fillets: "" };
+
+  // --- Step 1: Find connected components via 4-connected flood fill ---
+  function findComponents(pixels) {
+    const visited = new Set();
+    const components = [];
+    for (const k of pixels) {
+      if (visited.has(k)) continue;
+      const comp = new Set();
+      const stack = [k];
+      while (stack.length) {
+        const cur = stack.pop();
+        if (visited.has(cur)) continue;
+        visited.add(cur);
+        comp.add(cur);
+        const [x, y] = unkey(cur);
+        for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+          const nk = key(x + dx, y + dy);
+          if (pixels.has(nk) && !visited.has(nk)) stack.push(nk);
+        }
+      }
+      components.push(comp);
+    }
+    return components;
+  }
+
+  // --- Step 2: Trace boundary edges of a component ---
+  // Directions: 0=East, 1=South, 2=West, 3=North
+  // Convention: CW walk with filled cells on the right side of the edge.
+  //
+  // We walk along edges of the pixel grid. An edge separates two cells.
+  // Position (x, y, dir) means we're at vertex (x, y) about to walk in direction dir.
+  // The "right" cell (filled side) and "left" cell (empty side) depend on direction:
+  //   East:  right=(x, y),   left=(x, y-1)
+  //   South: right=(x-1, y), left=(x, y)
+  //   West:  right=(x-1, y-1), left=(x-1, y)
+  //   North: right=(x, y-1), left=(x-1, y-1)
+
+  const DX = [1, 0, -1, 0]; // movement delta per direction
+  const DY = [0, 1, 0, -1];
+  // Right cell offset: the filled cell to the right of the edge
+  const RCX = [0, -1, -1, 0];
+  const RCY = [0, 0, -1, -1];
+  // Left cell offset: the empty cell to the left of the edge
+  const LCX = [0, 0, -1, -1];
+  const LCY = [-1, 0, 0, -1];
+
+  function traceBoundary(comp) {
+    // Find topmost-leftmost pixel → start on its top edge, walking East
+    let startX = Infinity, startY = Infinity;
+    for (const k of comp) {
+      const [x, y] = unkey(k);
+      if (y < startY || (y === startY && x < startX)) { startX = x; startY = y; }
+    }
+    // Start at top-left vertex of that pixel, direction East
+    let cx = startX, cy = startY, dir = 0;
+    const startKey = key(startX, startY);
+    const vertices = [];
+
+    do {
+      // Advance one edge in current direction, snapping to avoid float drift
+      const nextX = snap(cx + DX[dir]);
+      const nextY = snap(cy + DY[dir]);
+      const rightDir = (dir + 1) % 4;
+      const leftDir = (dir + 3) % 4;
+
+      // Cell ahead-right: the cell that would be on the right if we continue straight
+      const aheadRight = comp.has(key(nextX + RCX[dir], nextY + RCY[dir]));
+      // Cell ahead-left: the cell that would be on the left if we continue straight
+      const aheadLeft = comp.has(key(nextX + LCX[dir], nextY + LCY[dir]));
+
+      if (!aheadRight) {
+        // Turn right (convex corner)
+        vertices.push({ x: nextX, y: nextY, turn: "right" });
+        cx = nextX; cy = nextY;
+        dir = rightDir;
+      } else if (!aheadLeft) {
+        // Go straight
+        vertices.push({ x: nextX, y: nextY, turn: "straight" });
+        cx = nextX; cy = nextY;
+      } else {
+        // Turn left (concave corner)
+        vertices.push({ x: nextX, y: nextY, turn: "left" });
+        cx = nextX; cy = nextY;
+        dir = leftDir;
+      }
+    } while (key(cx, cy) !== startKey || dir !== 0);
+
+    // Remove "straight" vertices — they carry no turn info and just fragment edges
+    return vertices.filter(v => v.turn !== "straight");
+  }
+
+  // --- Step 3: Find holes via exterior flood fill ---
+  function findHoles(comp) {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const k of comp) {
+      const [x, y] = unkey(k);
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+    }
+    // Expand bounding box by 1
+    minX--; minY--; maxX++; maxY++;
+
+    // Flood fill exterior from top-left corner
+    const exterior = new Set();
+    const stack = [key(minX, minY)];
+    while (stack.length) {
+      const cur = stack.pop();
+      if (exterior.has(cur)) continue;
+      const [x, y] = unkey(cur);
+      if (x < minX || x > maxX || y < minY || y > maxY) continue;
+      if (comp.has(cur)) continue;
+      exterior.add(cur);
+      for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const nk = key(x + dx, y + dy);
+        if (!exterior.has(nk)) stack.push(nk);
+      }
+    }
+
+    // Interior holes = cells inside bbox that are not in comp and not exterior
+    const holePixels = new Set();
+    for (let y = minY + 1; y < maxY; y++) {
+      for (let x = minX + 1; x < maxX; x++) {
+        const k = key(x, y);
+        if (!comp.has(k) && !exterior.has(k)) holePixels.add(k);
+      }
+    }
+
+    if (holePixels.size === 0) return [];
+    // Each hole may be a separate connected region
+    return findComponents(holePixels);
+  }
+
+  // Trace a hole boundary (CCW = filled on left instead of right)
+  // Easiest: trace the hole's pixels as if they were a component (CW), then reverse
+  function traceHoleBoundary(holeComp) {
+    const verts = traceBoundary(holeComp);
+    // Reverse the vertex list to get CCW winding
+    verts.reverse();
+    // After reversal, "right" turns become "left" and vice versa
+    for (const v of verts) {
+      if (v.turn === "right") v.turn = "left";
+      else if (v.turn === "left") v.turn = "right";
+    }
+    return verts;
+  }
+
+  // --- Step 4: Emit SVG path from vertices ---
+  function emitPath(vertices, ro, ri, isHole) {
+    if (vertices.length === 0) return "";
+    const p = [];
+
+    // For rounding: at each vertex, determine the radii that apply to the
+    // incoming and outgoing edges based on the turn type.
+    // We need to compute the edge lengths between vertices and shorten them
+    // by the radii at each end.
+
+    const n = vertices.length;
+
+    // Compute edge vectors and lengths
+    // Edge i goes from vertex i to vertex (i+1)%n
+    const edges = [];
+    for (let i = 0; i < n; i++) {
+      const v0 = vertices[i];
+      const v1 = vertices[(i + 1) % n];
+      const dx = v1.x - v0.x;
+      const dy = v1.y - v0.y;
+      const len = Math.abs(dx) + Math.abs(dy); // Manhattan (always axis-aligned)
+      edges.push({ dx, dy, len });
+    }
+
+    // "right" = convex → arc with rOuter; "left" = concave → Bézier with rInner.
+    // For holes, traceHoleBoundary already swapped the labels, so same logic applies.
+    function radiusAt(i) {
+      const turn = vertices[i].turn;
+      if (turn === "right") return ro;
+      if (turn === "left") return ri;
+      return 0;
+    }
+
+    // Find the starting position: offset from vertex 0 by the radius
+    // The edge from vertex (n-1) to vertex 0 is the "incoming" edge to vertex 0.
+    // We start the path at the point on that edge, radius distance before vertex 0.
+    const r0 = radiusAt(0);
+    const lastEdge = edges[n - 1];
+    // Direction of last edge (incoming to vertex 0)
+    let prevDx = Math.sign(lastEdge.dx);
+    let prevDy = Math.sign(lastEdge.dy);
+    const startX = vertices[0].x - prevDx * r0;
+    const startY = vertices[0].y - prevDy * r0;
+
+    p.push(`M${fmt(startX)},${fmt(startY)}`);
+
+    // Arc sweep: 1 for CW outer boundary, 0 for CCW hole boundary
+    const sweep = isHole ? 0 : 1;
+
+    for (let i = 0; i < n; i++) {
+      const r = radiusAt(i);
+      const edge = edges[i]; // outgoing edge from vertex i
+      const rNext = radiusAt((i + 1) % n);
+
+      // Direction of outgoing edge
+      const odx = Math.sign(edge.dx);
+      const ody = Math.sign(edge.dy);
+
+      if (vertices[i].turn === "right" && r > 0) {
+        // Convex corner: arc
+        // Current pos: vertex - prevDir * r. Target: vertex + outDir * r.
+        // Displacement = outDir*r + prevDir*r
+        const adx = fmt(odx * r + prevDx * r);
+        const ady = fmt(ody * r + prevDy * r);
+        p.push(`a${fmt(r)},${fmt(r)},0,0,${sweep},${adx},${ady}`);
+      } else if (vertices[i].turn === "left" && r > 0) {
+        // Concave corner: quadratic Bézier fillet
+        // Control point: at the vertex itself (relative to start)
+        const cpx = prevDx * r;
+        const cpy = prevDy * r;
+        const endx = prevDx * r + odx * r;
+        const endy = prevDy * r + ody * r;
+        p.push(`q${fmt(cpx)},${fmt(cpy)},${fmt(endx)},${fmt(endy)}`);
+      }
+      // else: straight through — no corner command needed
+
+      // Emit the edge segment (shortened by radii at both ends)
+      const edgeLen = edge.len - r - rNext;
+      if (edgeLen > 0.001) {
+        if (ody === 0) p.push(`h${fmt(odx * edgeLen)}`);
+        else p.push(`v${fmt(ody * edgeLen)}`);
+      }
+
+      // Update incoming direction for next vertex
+      prevDx = odx;
+      prevDy = ody;
+    }
+
+    p.push("z");
+    return p.join("");
+  }
+
+  // --- Step 5: Check if outer boundary already handles a hole ---
+  // The outer boundary can enter holes via "pinch points" when the trace
+  // approaches from certain directions, creating local CCW sub-loops.
+  // At these holes the outer boundary already produces winding=0, so adding
+  // a separate hole subpath would double-subtract (winding=-1 = incorrectly filled).
+  // We only emit hole subpaths for holes the outer boundary fully encloses (winding≠0).
+  function windingFromVertices(verts, px, py) {
+    let winding = 0;
+    const n = verts.length;
+    for (let i = 0; i < n; i++) {
+      const v0 = verts[i];
+      const v1 = verts[(i + 1) % n];
+      // Only vertical edges can cross a horizontal ray going right
+      if (v0.x === v1.x && v0.x > px) {
+        const minY = Math.min(v0.y, v1.y);
+        const maxY = Math.max(v0.y, v1.y);
+        if (py >= minY && py < maxY) {
+          winding += (v1.y > v0.y) ? 1 : -1;
+        }
+      }
+    }
+    return winding;
+  }
+
+  // --- Main: assemble all components + holes ---
+  const components = findComponents(squares);
+  const pathParts = [];
+
+  for (const comp of components) {
+    const outerVerts = traceBoundary(comp);
+    pathParts.push(emitPath(outerVerts, rOuter, rInner, false));
+
+    const holes = findHoles(comp);
+    for (const hole of holes) {
+      // Check winding at this hole's center from the outer boundary alone.
+      // If already 0, the outer boundary handles it via a pinch point — skip.
+      const testCell = hole.values().next().value;
+      const [tx, ty] = unkey(testCell);
+      if (windingFromVertices(outerVerts, tx + 0.5, ty + 0.5) === 0) continue;
+
+      const holeVerts = traceHoleBoundary(hole);
+      pathParts.push(emitPath(holeVerts, rOuter, rInner, true));
+    }
+  }
+
+  return { path: pathParts.join(" "), fillets: "" };
+}

@@ -312,6 +312,10 @@
               <input type="checkbox" id="full-l-corners">
               <label for="full-l-corners">Full-radius L-corners</label>
             </div>
+            <div class="checkbox-row">
+              <input type="checkbox" id="contour-mode">
+              <label for="contour-mode">Contour tracing</label>
+            </div>
             <div class="field">
               <label>Connect diagonals</label>
               <div class="field-row">
@@ -452,6 +456,7 @@
     const roundedInner = document.getElementById("rounded-inner");
     const roundedInnerValue = document.getElementById("rounded-inner-value");
     const fullLCornersCheckbox = document.getElementById("full-l-corners");
+    const contourModeCheckbox = document.getElementById("contour-mode");
     const connectDiagonalsSlider = document.getElementById("connect-diagonals");
     const connectDiagonalsValue = document.getElementById("connect-diagonals-value");
     const diagOnlyCheckbox = document.getElementById("diag-only");
@@ -570,6 +575,7 @@
         rpr: roundedRadius.value,
         rpri: roundedInner.value,
         flc: fullLCornersCheckbox.checked ? "1" : "0",
+        ct: contourModeCheckbox.checked ? "1" : "0",
         cd: connectDiagonalsSlider.value,
         dgo: diagOnlyCheckbox.checked ? "1" : "0",
         rj: jiggleSlider.value,
@@ -647,6 +653,7 @@
       if (get("rpr") != null) { roundedRadius.value = get("rpr"); roundedRadiusValue.textContent = parseFloat(get("rpr")).toFixed(2); }
       if (get("rpri") != null) { roundedInner.value = get("rpri"); roundedInnerValue.textContent = parseFloat(get("rpri")).toFixed(2); }
       if (get("flc") != null) fullLCornersCheckbox.checked = get("flc") === "1";
+      if (get("ct") != null) contourModeCheckbox.checked = get("ct") === "1";
       if (get("cd") != null) { connectDiagonalsSlider.value = get("cd"); connectDiagonalsValue.textContent = cdLabel(get("cd")); }
       if (get("dgo") != null) diagOnlyCheckbox.checked = get("dgo") === "1";
       if (get("rj") != null) { jiggleSlider.value = get("rj"); jiggleValue.textContent = get("rj"); }
@@ -705,6 +712,7 @@
         diagOnly: diagOnlyCheckbox.checked,
         jiggle: parseFloat(jiggleSlider.value),
         fullLCorners: fullLCornersCheckbox.checked,
+        contourMode: contourModeCheckbox.checked,
         wobbleFreq: parseFloat(wobbleFreqSlider.value),
         wobbleOctaves: parseInt(wobbleOctavesSlider.value),
         wobbleScale: parseFloat(wobbleScaleSlider.value),
@@ -835,6 +843,7 @@
     });
     diagOnlyCheckbox.addEventListener("change", () => redraw());
     fullLCornersCheckbox.addEventListener("change", () => redraw());
+    contourModeCheckbox.addEventListener("change", () => redraw());
     jiggleSlider.addEventListener("input", () => {
       jiggleValue.textContent = jiggleSlider.value;
       redraw();
