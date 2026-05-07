@@ -327,7 +327,7 @@ export function generate(svgText, {
   }
 
   // Build path converter (contour, rounded, or standard)
-  const useContour = contourMode && !diagOnly && jiggle === 0 && !fullLCorners;
+  const useContour = contourMode && !diagOnly && jiggle === 0;
   let toPath = (sq) => ({ path: squaresToPath(sq), fillets: "" });
   if (useContour || roundedPixels > 0 || roundedInner > 0) {
     const allPixels = new Set(qrSvg);
@@ -335,7 +335,7 @@ export function generate(svgText, {
       for (const [, squares] of group)
         for (const k of squares) allPixels.add(k);
     if (useContour) {
-      toPath = (sq) => squaresToContourPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals);
+      toPath = (sq) => squaresToContourPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, fullLCorners);
     } else {
       toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, diagOnly, jiggle, fullLCorners);
     }

@@ -447,7 +447,7 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
 
 // --- Contour tracing: one closed SVG path per connected component ---
 
-export function squaresToContourPath(squares, allPixels, rOuter, rInner, connectDiagonals = 0) {
+export function squaresToContourPath(squares, allPixels, rOuter, rInner, connectDiagonals = 0, fullLCorners = false) {
   if (squares.size === 0) return { path: "", fillets: "" };
 
   // --- Step 1: Find connected components via 4-connected flood fill ---
@@ -596,7 +596,7 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
   }
 
   // --- Step 4: Emit SVG path from vertices ---
-  function emitPath(vertices, ro, ri, isHole) {
+  function emitPath(vertices, ro, ri, isHole, compPixels) {
     if (vertices.length === 0) return "";
     const p = [];
 
@@ -617,6 +617,37 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
       const dy = v1.y - v0.y;
       const len = Math.abs(dx) + Math.abs(dy); // Manhattan (always axis-aligned)
       edges.push({ dx, dy, len });
+    }
+
+    // L-corner detection: at each "right" turn vertex, check if a quadrant
+    // pixel has an L-corner (exposed corner + both opposite cardinals present).
+    // Works for both outer (CW) and hole (CCW) boundaries by checking all 4
+    // quadrant pixels directly rather than relying on edge directions.
+    if (fullLCorners && ro > 0) {
+      for (let i = 0; i < n; i++) {
+        if (vertices[i].turn !== "right") continue;
+        const vx = vertices[i].x, vy = vertices[i].y;
+        // TL corner of pixel (vx,vy): adj=left,up absent; opp=right,down present
+        if (compPixels.has(key(vx, vy)) && !allPixels.has(key(vx - 1, vy)) && !allPixels.has(key(vx, vy - 1))
+            && allPixels.has(key(vx + 1, vy)) && allPixels.has(key(vx, vy + 1))) {
+          vertices[i].fullRadius = "TL"; continue;
+        }
+        // TR corner of pixel (vx-1,vy): adj=right,up absent; opp=left,down present
+        if (compPixels.has(key(vx - 1, vy)) && !allPixels.has(key(vx, vy)) && !allPixels.has(key(vx - 1, vy - 1))
+            && allPixels.has(key(vx - 2, vy)) && allPixels.has(key(vx - 1, vy + 1))) {
+          vertices[i].fullRadius = "TR"; continue;
+        }
+        // BL corner of pixel (vx,vy-1): adj=left,down absent; opp=right,up present
+        if (compPixels.has(key(vx, vy - 1)) && !allPixels.has(key(vx - 1, vy - 1)) && !allPixels.has(key(vx, vy))
+            && allPixels.has(key(vx + 1, vy - 1)) && allPixels.has(key(vx, vy - 2))) {
+          vertices[i].fullRadius = "BL"; continue;
+        }
+        // BR corner of pixel (vx-1,vy-1): adj=right,down absent; opp=left,up present
+        if (compPixels.has(key(vx - 1, vy - 1)) && !allPixels.has(key(vx, vy - 1)) && !allPixels.has(key(vx - 1, vy))
+            && allPixels.has(key(vx - 2, vy - 1)) && allPixels.has(key(vx - 1, vy - 2))) {
+          vertices[i].fullRadius = "BR"; continue;
+        }
+      }
     }
 
     // "right" = convex → arc with rOuter; "left" = concave → Bézier with rInner.
@@ -693,6 +724,52 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
 
     p.push("z");
     return p.join("");
+  }
+
+  // --- Step 4b: Emit CCW notch subpaths for L-corners ---
+  // At L-corner vertices, the contour uses the normal ro arc but per-pixel
+  // mode uses r=1. We emit CCW crescent subpaths to carve out the area
+  // between the ro arc and the r=1 arc, matching per-pixel visually.
+  // The notch directions are determined by the corner TYPE (TL/TR/BL/BR),
+  // not the boundary edge directions, since the boundary may traverse
+  // through this vertex from a different pixel's corner.
+  //
+  // Per corner type, the "incoming" and "outgoing" directions (from the
+  // pixel's own CW boundary perspective) are:
+  //   TL: in=(0,-1) out=(1,0)   TR: in=(1,0) out=(0,1)
+  //   BL: in=(-1,0) out=(0,-1)  BR: in=(0,1) out=(-1,0)
+  const LC_DIRS = {
+    TL: { pdx: 0, pdy: -1, odx: 1, ody: 0 },
+    TR: { pdx: 1, pdy: 0, odx: 0, ody: 1 },
+    BL: { pdx: -1, pdy: 0, odx: 0, ody: -1 },
+    BR: { pdx: 0, pdy: 1, odx: -1, ody: 0 },
+  };
+
+  function emitLCornerNotches(vertices, ro) {
+    if (!fullLCorners || ro <= 0) return "";
+    const parts = [];
+    for (let i = 0; i < vertices.length; i++) {
+      if (!vertices[i].fullRadius) continue;
+      if (vertices[i].diagConnected || vertices[i].checkerboard) continue;
+      const vx = vertices[i].x, vy = vertices[i].y;
+      const { pdx, pdy, odx, ody } = LC_DIRS[vertices[i].fullRadius];
+      // P1 = ro arc start (incoming edge), P2 = r=1 arc start
+      // P3 = r=1 arc end (outgoing edge), P4 = ro arc end
+      const p1x = vx - pdx * ro, p1y = vy - pdy * ro;
+      const p2x = vx - pdx, p2y = vy - pdy;
+      const p3x = vx + odx, p3y = vy + ody;
+      const p4x = vx + odx * ro, p4y = vy + ody * ro;
+      // CCW crescent: P1 → P2 → CW arc r=1 → P3 → P4 → CCW arc ro → P1
+      parts.push(
+        `M${fmt(p1x)},${fmt(p1y)}` +
+        `L${fmt(p2x)},${fmt(p2y)}` +
+        `A1,1,0,0,1,${fmt(p3x)},${fmt(p3y)}` +
+        `L${fmt(p4x)},${fmt(p4y)}` +
+        `A${fmt(ro)},${fmt(ro)},0,0,0,${fmt(p1x)},${fmt(p1y)}` +
+        `Z`
+      );
+    }
+    return parts.join(" ");
   }
 
   // --- Step 5: Check if outer boundary already handles a hole ---
@@ -844,7 +921,10 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
   for (const comp of components) {
     const outerVerts = traceBoundary(comp);
     if (diagConnections.size > 0) markDiagConnectedVertices(outerVerts, diagConnections);
-    pathParts.push(emitPath(outerVerts, rOuter, rInner, false));
+    pathParts.push(emitPath(outerVerts, rOuter, rInner, false, comp));
+    // Emit L-corner notches for outer boundary
+    const lcNotches = emitLCornerNotches(outerVerts, rOuter);
+    if (lcNotches) pathParts.push(lcNotches);
 
     const holes = findHoles(comp);
 
@@ -860,10 +940,13 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
       const holeVerts = traceHoleBoundary(hole);
       markCheckerboardVertices(holeVerts);
       if (diagConnections.size > 0) markDiagConnectedVertices(holeVerts, diagConnections);
-      pathParts.push(emitPath(holeVerts, rOuter, rInner, true));
+      pathParts.push(emitPath(holeVerts, rOuter, rInner, true, comp));
       // Emit rOuter arc notches at checkerboard vertices
       const notches = emitCheckerboardNotches(holeVerts, rOuter, emittedNotches);
       if (notches) pathParts.push(notches);
+      // Emit L-corner notches for hole boundary
+      const holeLcNotches = emitLCornerNotches(holeVerts, rOuter);
+      if (holeLcNotches) pathParts.push(holeLcNotches);
     }
   }
 
