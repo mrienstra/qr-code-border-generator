@@ -340,15 +340,18 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
     }
     function buildFilletPath(ax, ay, tax, tay, bx, by, tbx, tby, vx, vy) {
       const det = tax * (-tby) - (-tbx) * tay;
+      let cpx, cpy;
       if (Math.abs(det) < 1e-10) {
-        return `M${fmt(ax)},${fmt(ay)}Q${fmt((ax+bx)/2)},${fmt((ay+by)/2)},${fmt(bx)},${fmt(by)}L${fmt(vx)},${fmt(vy)}Z`;
+        cpx = (ax + bx) / 2; cpy = (ay + by) / 2;
+      } else {
+        const alpha = ((bx - ax) * (-tby) - (-tbx) * (by - ay)) / det;
+        cpx = ax + alpha * tax;
+        cpy = ay + alpha * tay;
       }
-      const alpha = ((bx - ax) * (-tby) - (-tbx) * (by - ay)) / det;
-      const cpx = ax + alpha * tax;
-      const cpy = ay + alpha * tay;
       return `M${fmt(ax)},${fmt(ay)}Q${fmt(cpx)},${fmt(cpy)},${fmt(bx)},${fmt(by)}L${fmt(vx)},${fmt(vy)}Z`;
     }
 
+    const fillets = [];
     for (const [x, y] of sorted) {
       const hasL = allPixels.has(key(x - 1, y));
       const hasR = allPixels.has(key(x + 1, y));
@@ -364,7 +367,7 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
         if (Ra <= ro && Rb <= ro) {
           const jcx = jiggle > 0 ? (vtxHash(x, y, 1) - 0.5) * jiggle * ri : 0;
           const jcy = jiggle > 0 ? (vtxHash(x, y, 2) - 0.5) * jiggle * ri : 0;
-          paths.push(`M${fmt(x)},${fmt(y - ri)}q${fmt(jcx)},${fmt(ri + jcy)},${nrif},${rif}h${rif}z`);
+          fillets.push(`M${fmt(x)},${fmt(y - ri)}q${fmt(jcx)},${fmt(ri + jcy)},${nrif},${rif}h${rif}z`);
         } else {
           const eA = Ra > ro
             ? findEdge(y - ri, x + Ra, (y - 1) + Ra, Ra, -1, true)
@@ -372,7 +375,7 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
           const eB = Rb > ro
             ? findEdge(x - ri, (x - 1) + Rb, y + Rb, Rb, -1, false)
             : { px: x - ri, py: y, tx: -1, ty: 0 };
-          paths.push(buildFilletPath(eA.px, eA.py, eA.tx, eA.ty, eB.px, eB.py, eB.tx, eB.ty, x, y));
+          fillets.push(buildFilletPath(eA.px, eA.py, eA.tx, eA.ty, eB.px, eB.py, eB.tx, eB.ty, x, y));
         }
       }
       // Inner TR at vertex (x+1, y)
@@ -384,7 +387,7 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
         if (Ra <= ro && Rb <= ro) {
           const jcx = jiggle > 0 ? (vtxHash(x + 1, y, 1) - 0.5) * jiggle * ri : 0;
           const jcy = jiggle > 0 ? (vtxHash(x + 1, y, 2) - 0.5) * jiggle * ri : 0;
-          paths.push(`M${fmt(x + 1 + ri)},${fmt(y)}q${fmt(-ri + jcx)},${fmt(jcy)},${nrif},${nrif}v${rif}z`);
+          fillets.push(`M${fmt(x + 1 + ri)},${fmt(y)}q${fmt(-ri + jcx)},${fmt(jcy)},${nrif},${nrif}v${rif}z`);
         } else {
           const eA = Ra > ro
             ? findEdge(y - ri, x + 1 - Ra, (y - 1) + Ra, Ra, +1, true)
@@ -392,7 +395,7 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
           const eB = Rb > ro
             ? findEdge(x + 1 + ri, (x + 2) - Rb, y + Rb, Rb, -1, false)
             : { px: x + 1 + ri, py: y, tx: -1, ty: 0 };
-          paths.push(buildFilletPath(eA.px, eA.py, eA.tx, eA.ty, eB.px, eB.py, eB.tx, eB.ty, x + 1, y));
+          fillets.push(buildFilletPath(eA.px, eA.py, eA.tx, eA.ty, eB.px, eB.py, eB.tx, eB.ty, x + 1, y));
         }
       }
       // Inner BR at vertex (x+1, y+1)
@@ -404,7 +407,7 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
         if (Ra <= ro && Rb <= ro) {
           const jcx = jiggle > 0 ? (vtxHash(x + 1, y + 1, 1) - 0.5) * jiggle * ri : 0;
           const jcy = jiggle > 0 ? (vtxHash(x + 1, y + 1, 2) - 0.5) * jiggle * ri : 0;
-          paths.push(`M${fmt(x + 1)},${fmt(y + 1 + ri)}q${fmt(jcx)},${fmt(-ri + jcy)},${rif},${nrif}h${nrif}z`);
+          fillets.push(`M${fmt(x + 1)},${fmt(y + 1 + ri)}q${fmt(jcx)},${fmt(-ri + jcy)},${rif},${nrif}h${nrif}z`);
         } else {
           const eA = Ra > ro
             ? findEdge(y + 1 + ri, x + 1 - Ra, (y + 2) - Ra, Ra, +1, true)
@@ -412,7 +415,7 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
           const eB = Rb > ro
             ? findEdge(x + 1 + ri, (x + 2) - Rb, y + 1 - Rb, Rb, +1, false)
             : { px: x + 1 + ri, py: y + 1, tx: 1, ty: 0 };
-          paths.push(buildFilletPath(eA.px, eA.py, eA.tx, eA.ty, eB.px, eB.py, eB.tx, eB.ty, x + 1, y + 1));
+          fillets.push(buildFilletPath(eA.px, eA.py, eA.tx, eA.ty, eB.px, eB.py, eB.tx, eB.ty, x + 1, y + 1));
         }
       }
       // Inner BL at vertex (x, y+1)
@@ -424,7 +427,7 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
         if (Ra <= ro && Rb <= ro) {
           const jcx = jiggle > 0 ? (vtxHash(x, y + 1, 1) - 0.5) * jiggle * ri : 0;
           const jcy = jiggle > 0 ? (vtxHash(x, y + 1, 2) - 0.5) * jiggle * ri : 0;
-          paths.push(`M${fmt(x - ri)},${fmt(y + 1)}q${fmt(ri + jcx)},${fmt(jcy)},${rif},${rif}v${nrif}z`);
+          fillets.push(`M${fmt(x - ri)},${fmt(y + 1)}q${fmt(ri + jcx)},${fmt(jcy)},${rif},${rif}v${nrif}z`);
         } else {
           const eA = Ra > ro
             ? findEdge(y + 1 + ri, x + Ra, (y + 2) - Ra, Ra, -1, true)
@@ -432,11 +435,12 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
           const eB = Rb > ro
             ? findEdge(x - ri, (x - 1) + Rb, y + 1 - Rb, Rb, +1, false)
             : { px: x - ri, py: y + 1, tx: 1, ty: 0 };
-          paths.push(buildFilletPath(eA.px, eA.py, eA.tx, eA.ty, eB.px, eB.py, eB.tx, eB.ty, x, y + 1));
+          fillets.push(buildFilletPath(eA.px, eA.py, eA.tx, eA.ty, eB.px, eB.py, eB.tx, eB.ty, x, y + 1));
         }
       }
     }
+    return { path: paths.join(" "), fillets: fillets.join(" ") };
   }
 
-  return paths.join(" ");
+  return { path: paths.join(" "), fillets: "" };
 }

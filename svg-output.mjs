@@ -74,6 +74,7 @@ export function generateSvg(qrPath, decorationPaths, layout, {
   bgColor = "#ffffff", bgShape = "circle", fgColor = "#000000", borderColor = "#000000",
   border2Color = null, border2Width = 4, border2Offset = 0,
   wobbleFreq = 0, wobbleOctaves = 3, wobbleScale = 0,
+  filletPath = "",
 } = {}) {
   const s = fmt(layout.svgSize);
   const lines = [
@@ -107,6 +108,9 @@ export function generateSvg(qrPath, decorationPaths, layout, {
   for (const [label, pathD, color, step] of decorationPaths) {
     lines.push(`    <!-- ${label} -->`);
     lines.push(`    <path data-step="${step}" d="${pathD}" fill="${color}"/>`);
+  }
+  if (filletPath) {
+    lines.push(`    <path d="${filletPath}" fill="${fgColor}"/>`);
   }
   lines.push(`  </g>`);
   if (border2Color !== null) {

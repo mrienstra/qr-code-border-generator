@@ -326,7 +326,7 @@ export function generate(svgText, {
   }
 
   // Build path converter (rounded or standard)
-  let toPath = squaresToPath;
+  let toPath = (sq) => ({ path: squaresToPath(sq), fillets: "" });
   if (roundedPixels > 0 || roundedInner > 0) {
     const allPixels = new Set(qrSvg);
     for (const [, group] of allGroups)
@@ -391,7 +391,9 @@ export function generate(svgText, {
     }
   }
 
-  const qrPath = toPath(qrSvg);
+  const qrResult = toPath(qrSvg);
+  const qrPath = qrResult.path;
+  let allFillets = qrResult.fillets;
 
   const decorationPaths = [];
   for (const [groupName, group] of allGroups) {
@@ -402,11 +404,13 @@ export function generate(svgText, {
       // Step: 0=QR, 1=center reflections, 2+=flanking rep N
       const repMatch = label.match(/:(\d+)$/);
       const step = repMatch ? parseInt(repMatch[1]) + 1 : 1;
-      decorationPaths.push([label, toPath(svgSquares), color, step]);
+      const result = toPath(svgSquares);
+      decorationPaths.push([label, result.path, color, step]);
+      if (result.fillets) allFillets += (allFillets ? " " : "") + result.fillets;
     }
   }
 
-  return generateSvg(qrPath, decorationPaths, layout, { bgColor, bgShape, fgColor, borderColor, border2Color, border2Width, border2Offset, wobbleFreq, wobbleOctaves, wobbleScale });
+  return generateSvg(qrPath, decorationPaths, layout, { bgColor, bgShape, fgColor, borderColor, border2Color, border2Width, border2Offset, wobbleFreq, wobbleOctaves, wobbleScale, filletPath: allFillets });
 }
 
 // --- Node CLI ---
