@@ -142,6 +142,7 @@ export function generate(svgText, {
   diagOnly = false,
   jiggle = 0,
   fullLCorners = false,
+  skipCheckerLCorners = false,
   contourMode = false,
   wobbleFreq = 0,
   wobbleOctaves = 3,
@@ -335,9 +336,9 @@ export function generate(svgText, {
       for (const [, squares] of group)
         for (const k of squares) allPixels.add(k);
     if (useContour) {
-      toPath = (sq) => squaresToContourPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, fullLCorners);
+      toPath = (sq) => squaresToContourPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, fullLCorners, skipCheckerLCorners);
     } else {
-      toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, diagOnly, jiggle, fullLCorners);
+      toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, diagOnly, jiggle, fullLCorners, skipCheckerLCorners);
     }
 
     // Diagnostic: check for adjacency mismatches (floating-point key issues)
@@ -481,6 +482,7 @@ async function cli() {
     randAlign: values["rand-align"],
     randFluff: values["rand-fluff"],
     fullLCorners: values["full-l-corners"],
+    skipCheckerLCorners: values["skip-checker-l-corners"],
     contourMode: values["contour-mode"],
   });
 

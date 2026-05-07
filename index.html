@@ -312,6 +312,10 @@
               <input type="checkbox" id="full-l-corners">
               <label for="full-l-corners">Full-radius L-corners</label>
             </div>
+            <div class="checkbox-row" id="skip-checker-l-corners-row" style="display:none; padding-left: 1.5em;">
+              <input type="checkbox" id="skip-checker-l-corners">
+              <label for="skip-checker-l-corners">Skip at diagonal neighbors</label>
+            </div>
             <div class="checkbox-row">
               <input type="checkbox" id="contour-mode">
               <label for="contour-mode">Contour tracing</label>
@@ -456,6 +460,8 @@
     const roundedInner = document.getElementById("rounded-inner");
     const roundedInnerValue = document.getElementById("rounded-inner-value");
     const fullLCornersCheckbox = document.getElementById("full-l-corners");
+    const skipCheckerLCornersCheckbox = document.getElementById("skip-checker-l-corners");
+    const skipCheckerLCornersRow = document.getElementById("skip-checker-l-corners-row");
     const contourModeCheckbox = document.getElementById("contour-mode");
     const connectDiagonalsSlider = document.getElementById("connect-diagonals");
     const connectDiagonalsValue = document.getElementById("connect-diagonals-value");
@@ -575,6 +581,7 @@
         rpr: roundedRadius.value,
         rpri: roundedInner.value,
         flc: fullLCornersCheckbox.checked ? "1" : "0",
+        scl: skipCheckerLCornersCheckbox.checked ? "1" : "0",
         ct: contourModeCheckbox.checked ? "1" : "0",
         cd: connectDiagonalsSlider.value,
         dgo: diagOnlyCheckbox.checked ? "1" : "0",
@@ -653,6 +660,7 @@
       if (get("rpr") != null) { roundedRadius.value = get("rpr"); roundedRadiusValue.textContent = parseFloat(get("rpr")).toFixed(2); }
       if (get("rpri") != null) { roundedInner.value = get("rpri"); roundedInnerValue.textContent = parseFloat(get("rpri")).toFixed(2); }
       if (get("flc") != null) fullLCornersCheckbox.checked = get("flc") === "1";
+      if (get("scl") != null) skipCheckerLCornersCheckbox.checked = get("scl") === "1";
       if (get("ct") != null) contourModeCheckbox.checked = get("ct") === "1";
       if (get("cd") != null) { connectDiagonalsSlider.value = get("cd"); connectDiagonalsValue.textContent = cdLabel(get("cd")); }
       if (get("dgo") != null) diagOnlyCheckbox.checked = get("dgo") === "1";
@@ -661,6 +669,7 @@
       if (get("wo") != null) { wobbleOctavesSlider.value = get("wo"); wobbleOctavesValue.textContent = get("wo"); }
       if (get("ws") != null) { wobbleScaleSlider.value = get("ws"); wobbleScaleValue.textContent = get("ws"); }
       roundedPixelsFields.style.display = roundedPixelsCheckbox.checked ? "" : "none";
+      skipCheckerLCornersRow.style.display = fullLCornersCheckbox.checked ? "" : "none";
       if (get("dbg") != null) colorful.checked = get("dbg") === "1";
       document.getElementById("step-controls").style.display = colorful.checked ? "flex" : "none";
     }
@@ -712,6 +721,7 @@
         diagOnly: diagOnlyCheckbox.checked,
         jiggle: parseFloat(jiggleSlider.value),
         fullLCorners: fullLCornersCheckbox.checked,
+        skipCheckerLCorners: skipCheckerLCornersCheckbox.checked,
         contourMode: contourModeCheckbox.checked,
         wobbleFreq: parseFloat(wobbleFreqSlider.value),
         wobbleOctaves: parseInt(wobbleOctavesSlider.value),
@@ -842,7 +852,11 @@
       redraw();
     });
     diagOnlyCheckbox.addEventListener("change", () => redraw());
-    fullLCornersCheckbox.addEventListener("change", () => redraw());
+    fullLCornersCheckbox.addEventListener("change", () => {
+      skipCheckerLCornersRow.style.display = fullLCornersCheckbox.checked ? "" : "none";
+      redraw();
+    });
+    skipCheckerLCornersCheckbox.addEventListener("change", () => redraw());
     contourModeCheckbox.addEventListener("change", () => redraw());
     jiggleSlider.addEventListener("input", () => {
       jiggleValue.textContent = jiggleSlider.value;
