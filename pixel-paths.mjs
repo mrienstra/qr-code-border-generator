@@ -137,7 +137,12 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
     t ^= t + Math.imul(t ^ t >>> 7, 61 | t);
     return ((t ^ t >>> 14) >>> 0) / 4294967296;
   }
-  return sorted.map(([x, y]) => {
+  // Two-pass mode: when fullLCorners is active with inner radius, inner fillets
+  // need neighbor corner info that isn't available until all outlines are built.
+  const needsTwoPass = fullLCorners && ri > 0;
+  const cornerInfoMap = needsTwoPass ? new Map() : null;
+
+  const paths = sorted.map(([x, y]) => {
     const hasL = allPixels.has(key(x - 1, y));
     const hasR = allPixels.has(key(x + 1, y));
     const hasU = allPixels.has(key(x, y - 1));
@@ -252,11 +257,19 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
       p.push('z');
       path = p.join('');
     }
+    // Store corner info for second-pass fillet computation
+    if (cornerInfoMap) {
+      cornerInfoMap.set(key(x, y), {
+        tl: tl ? tlR : 0, tr: tr ? trR : 0,
+        br: br ? brR : 0, bl: bl ? blR : 0,
+      });
+    }
     // Inner corners: fill smooth Bezier transitions at concave vertices
     // where diagonal is absent but both adjacent cardinals are present
     // (L-shape junction). Quadratic Bezier smoothly transitions between
     // the two edge directions, filling the curved triangle at the corner.
-    if (ri > 0) {
+    // In two-pass mode, defer to pass 2 for tangent-continuous fillets.
+    if (ri > 0 && !needsTwoPass) {
       // Jiggle only the Bezier control point, NOT the endpoint.
       // Endpoints stay on pixel edges so the fill connects flush.
       // Edge bowing is suppressed at inner corner vertices (above), so
@@ -304,5 +317,126 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
       }
     }
     return path;
-  }).join(" ");
+  });
+
+  // --- Pass 2: tangent-continuous inner fillets for full-radius L-corners ---
+  // When a neighbor has a full-radius arc (R=1), the arc extends past the grid
+  // line, so the fillet endpoint shifts to the arc-line intersection.
+  // findEdge computes that intersection + tangent; buildFillet solves for the
+  // quadratic Bézier control point satisfying both tangent constraints.
+  if (needsTwoPass) {
+    function findEdge(line, cx, cy, R, sign, isHoriz) {
+      if (isHoriz) {
+        const dy = line - cy;
+        const dx = sign * Math.sqrt(Math.max(0, R * R - dy * dy));
+        const len = Math.hypot(dx, dy);
+        return { px: cx + dx, py: line, tx: dy / len, ty: -dx / len };
+      } else {
+        const dx = line - cx;
+        const dy = sign * Math.sqrt(Math.max(0, R * R - dx * dx));
+        const len = Math.hypot(dx, dy);
+        return { px: line, py: cy + dy, tx: dy / len, ty: -dx / len };
+      }
+    }
+    function buildFilletPath(ax, ay, tax, tay, bx, by, tbx, tby, vx, vy) {
+      const det = tax * (-tby) - (-tbx) * tay;
+      if (Math.abs(det) < 1e-10) {
+        return `M${fmt(ax)},${fmt(ay)}Q${fmt((ax+bx)/2)},${fmt((ay+by)/2)},${fmt(bx)},${fmt(by)}L${fmt(vx)},${fmt(vy)}Z`;
+      }
+      const alpha = ((bx - ax) * (-tby) - (-tbx) * (by - ay)) / det;
+      const cpx = ax + alpha * tax;
+      const cpy = ay + alpha * tay;
+      return `M${fmt(ax)},${fmt(ay)}Q${fmt(cpx)},${fmt(cpy)},${fmt(bx)},${fmt(by)}L${fmt(vx)},${fmt(vy)}Z`;
+    }
+
+    for (const [x, y] of sorted) {
+      const hasL = allPixels.has(key(x - 1, y));
+      const hasR = allPixels.has(key(x + 1, y));
+      const hasU = allPixels.has(key(x, y - 1));
+      const hasD = allPixels.has(key(x, y + 1));
+
+      // Inner TL at vertex (x, y)
+      if (hasL && hasU && !allPixels.has(key(x - 1, y - 1))) {
+        const upperInfo = cornerInfoMap.get(key(x, y - 1));
+        const leftInfo = cornerInfoMap.get(key(x - 1, y));
+        const Ra = upperInfo?.tl ?? ro;
+        const Rb = leftInfo?.tl ?? ro;
+        if (Ra <= ro && Rb <= ro) {
+          const jcx = jiggle > 0 ? (vtxHash(x, y, 1) - 0.5) * jiggle * ri : 0;
+          const jcy = jiggle > 0 ? (vtxHash(x, y, 2) - 0.5) * jiggle * ri : 0;
+          paths.push(`M${fmt(x)},${fmt(y - ri)}q${fmt(jcx)},${fmt(ri + jcy)},${nrif},${rif}h${rif}z`);
+        } else {
+          const eA = Ra > ro
+            ? findEdge(y - ri, x + Ra, (y - 1) + Ra, Ra, -1, true)
+            : { px: x, py: y - ri, tx: 0, ty: 1 };
+          const eB = Rb > ro
+            ? findEdge(x - ri, (x - 1) + Rb, y + Rb, Rb, -1, false)
+            : { px: x - ri, py: y, tx: -1, ty: 0 };
+          paths.push(buildFilletPath(eA.px, eA.py, eA.tx, eA.ty, eB.px, eB.py, eB.tx, eB.ty, x, y));
+        }
+      }
+      // Inner TR at vertex (x+1, y)
+      if (hasR && hasU && !allPixels.has(key(x + 1, y - 1))) {
+        const upperInfo = cornerInfoMap.get(key(x, y - 1));
+        const rightInfo = cornerInfoMap.get(key(x + 1, y));
+        const Ra = upperInfo?.tr ?? ro;
+        const Rb = rightInfo?.tr ?? ro;
+        if (Ra <= ro && Rb <= ro) {
+          const jcx = jiggle > 0 ? (vtxHash(x + 1, y, 1) - 0.5) * jiggle * ri : 0;
+          const jcy = jiggle > 0 ? (vtxHash(x + 1, y, 2) - 0.5) * jiggle * ri : 0;
+          paths.push(`M${fmt(x + 1 + ri)},${fmt(y)}q${fmt(-ri + jcx)},${fmt(jcy)},${nrif},${nrif}v${rif}z`);
+        } else {
+          const eA = Ra > ro
+            ? findEdge(y - ri, x + 1 - Ra, (y - 1) + Ra, Ra, +1, true)
+            : { px: x + 1, py: y - ri, tx: 0, ty: 1 };
+          const eB = Rb > ro
+            ? findEdge(x + 1 + ri, (x + 2) - Rb, y + Rb, Rb, -1, false)
+            : { px: x + 1 + ri, py: y, tx: -1, ty: 0 };
+          paths.push(buildFilletPath(eA.px, eA.py, eA.tx, eA.ty, eB.px, eB.py, eB.tx, eB.ty, x + 1, y));
+        }
+      }
+      // Inner BR at vertex (x+1, y+1)
+      if (hasR && hasD && !allPixels.has(key(x + 1, y + 1))) {
+        const lowerInfo = cornerInfoMap.get(key(x, y + 1));
+        const rightInfo = cornerInfoMap.get(key(x + 1, y));
+        const Ra = lowerInfo?.br ?? ro;
+        const Rb = rightInfo?.br ?? ro;
+        if (Ra <= ro && Rb <= ro) {
+          const jcx = jiggle > 0 ? (vtxHash(x + 1, y + 1, 1) - 0.5) * jiggle * ri : 0;
+          const jcy = jiggle > 0 ? (vtxHash(x + 1, y + 1, 2) - 0.5) * jiggle * ri : 0;
+          paths.push(`M${fmt(x + 1)},${fmt(y + 1 + ri)}q${fmt(jcx)},${fmt(-ri + jcy)},${rif},${nrif}h${nrif}z`);
+        } else {
+          const eA = Ra > ro
+            ? findEdge(y + 1 + ri, x + 1 - Ra, (y + 2) - Ra, Ra, +1, true)
+            : { px: x + 1, py: y + 1 + ri, tx: 0, ty: -1 };
+          const eB = Rb > ro
+            ? findEdge(x + 1 + ri, (x + 2) - Rb, y + 1 - Rb, Rb, +1, false)
+            : { px: x + 1 + ri, py: y + 1, tx: 1, ty: 0 };
+          paths.push(buildFilletPath(eA.px, eA.py, eA.tx, eA.ty, eB.px, eB.py, eB.tx, eB.ty, x + 1, y + 1));
+        }
+      }
+      // Inner BL at vertex (x, y+1)
+      if (hasL && hasD && !allPixels.has(key(x - 1, y + 1))) {
+        const lowerInfo = cornerInfoMap.get(key(x, y + 1));
+        const leftInfo = cornerInfoMap.get(key(x - 1, y));
+        const Ra = lowerInfo?.bl ?? ro;
+        const Rb = leftInfo?.bl ?? ro;
+        if (Ra <= ro && Rb <= ro) {
+          const jcx = jiggle > 0 ? (vtxHash(x, y + 1, 1) - 0.5) * jiggle * ri : 0;
+          const jcy = jiggle > 0 ? (vtxHash(x, y + 1, 2) - 0.5) * jiggle * ri : 0;
+          paths.push(`M${fmt(x - ri)},${fmt(y + 1)}q${fmt(ri + jcx)},${fmt(jcy)},${rif},${rif}v${nrif}z`);
+        } else {
+          const eA = Ra > ro
+            ? findEdge(y + 1 + ri, x + Ra, (y + 2) - Ra, Ra, -1, true)
+            : { px: x, py: y + 1 + ri, tx: 0, ty: -1 };
+          const eB = Rb > ro
+            ? findEdge(x - ri, (x - 1) + Rb, y + 1 - Rb, Rb, +1, false)
+            : { px: x - ri, py: y + 1, tx: 1, ty: 0 };
+          paths.push(buildFilletPath(eA.px, eA.py, eA.tx, eA.ty, eB.px, eB.py, eB.tx, eB.ty, x, y + 1));
+        }
+      }
+    }
+  }
+
+  return paths.join(" ");
 }
