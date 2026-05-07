@@ -447,7 +447,7 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
 
 // --- Contour tracing: one closed SVG path per connected component ---
 
-export function squaresToContourPath(squares, allPixels, rOuter, rInner) {
+export function squaresToContourPath(squares, allPixels, rOuter, rInner, connectDiagonals = 0) {
   if (squares.size === 0) return { path: "", fillets: "" };
 
   // --- Step 1: Find connected components via 4-connected flood fill ---
@@ -625,6 +625,7 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner) {
     // fillet there (filled pixels have convex, not concave, corners).
     function radiusAt(i) {
       if (vertices[i].checkerboard) return 0;
+      if (vertices[i].diagConnected) return 0;
       const turn = vertices[i].turn;
       if (turn === "right") return ro;
       if (turn === "left") return ri;
@@ -754,6 +755,9 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner) {
       if (!v.checkerboard) continue;
       const vk = key(v.x, v.y);
       if (emittedSet.has(vk)) continue;
+      // Skip checkerboard notches at diagonal connection vertices —
+      // diagonal fillets handle the fill there instead.
+      if (diagConnections.has(vk)) continue;
       emittedSet.add(vk);
 
       const vxf = fmt(v.x), vyf = fmt(v.y);
@@ -782,6 +786,56 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner) {
     return parts.join(" ");
   }
 
+  // --- Step 7: Mark diagonal-connected vertices on traced boundaries ---
+  function markDiagConnectedVertices(verts, diagConns) {
+    for (const v of verts) {
+      if (v.turn === "right" && diagConns.has(key(v.x, v.y))) {
+        v.diagConnected = true;
+      }
+    }
+  }
+
+  // --- Step 8: Pre-compute diagonal connections ---
+  // Reuse the same scoring logic as per-pixel mode. For each pixel, check
+  // BR and BL diagonals (to avoid duplication). Store the set of connected
+  // vertices keyed by "vx,vy" along with the direction ("br" or "bl").
+  const diagConnections = new Map(); // vertexKey -> "br" | "bl"
+  if (connectDiagonals > 0) {
+    const threshold = connectDiagonals - 1;
+    const tFloor = Math.floor(threshold);
+    const frac = threshold - tFloor;
+    for (const k of allPixels) {
+      const [x, y] = unkey(k);
+      const hasL = allPixels.has(key(x - 1, y));
+      const hasR = allPixels.has(key(x + 1, y));
+      const hasU = allPixels.has(key(x, y - 1));
+      const hasD = allPixels.has(key(x, y + 1));
+      const remCurrent = (hasL ? 1 : 0) + (hasR ? 1 : 0) + (hasU ? 1 : 0) + (hasD ? 1 : 0);
+      function shouldConnect(remOther, vx, vy) {
+        const sum = remCurrent + remOther;
+        if (sum <= tFloor) return true;
+        if (frac > 0 && sum === tFloor + 1) {
+          return ((vx * 3 + vy * 7) % 4) < (frac * 4);
+        }
+        return false;
+      }
+      // BR diagonal: vertex (x+1, y+1)
+      if (!hasR && !hasD && allPixels.has(key(x + 1, y + 1))) {
+        const rem = (allPixels.has(key(x + 2, y + 1)) ? 1 : 0) + (allPixels.has(key(x + 1, y + 2)) ? 1 : 0);
+        if (shouldConnect(rem, x + 1, y + 1)) {
+          diagConnections.set(key(x + 1, y + 1), "br");
+        }
+      }
+      // BL diagonal: vertex (x, y+1)
+      if (!hasL && !hasD && allPixels.has(key(x - 1, y + 1))) {
+        const rem = (allPixels.has(key(x - 2, y + 1)) ? 1 : 0) + (allPixels.has(key(x - 1, y + 2)) ? 1 : 0);
+        if (shouldConnect(rem, x, y + 1)) {
+          diagConnections.set(key(x, y + 1), "bl");
+        }
+      }
+    }
+  }
+
   // --- Main: assemble all components + holes ---
   const components = findComponents(squares);
   const pathParts = [];
@@ -789,6 +843,7 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner) {
 
   for (const comp of components) {
     const outerVerts = traceBoundary(comp);
+    if (diagConnections.size > 0) markDiagConnectedVertices(outerVerts, diagConnections);
     pathParts.push(emitPath(outerVerts, rOuter, rInner, false));
 
     const holes = findHoles(comp);
@@ -804,6 +859,7 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner) {
     for (const hole of neededHoles) {
       const holeVerts = traceHoleBoundary(hole);
       markCheckerboardVertices(holeVerts);
+      if (diagConnections.size > 0) markDiagConnectedVertices(holeVerts, diagConnections);
       pathParts.push(emitPath(holeVerts, rOuter, rInner, true));
       // Emit rOuter arc notches at checkerboard vertices
       const notches = emitCheckerboardNotches(holeVerts, rOuter, emittedNotches);
@@ -811,5 +867,25 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner) {
     }
   }
 
-  return { path: pathParts.join(" "), fillets: "" };
+  // Emit diagonal fillet subpaths (two Bézier curves per connected vertex)
+  const filletParts = [];
+  if (diagConnections.size > 0 && rInner > 0) {
+    const ri = rInner;
+    const rif = fmt(ri);
+    const nrif = fmt(-ri);
+    for (const [vk, dir] of diagConnections) {
+      const [vx, vy] = unkey(vk);
+      if (dir === "br") {
+        filletParts.push(`M${fmt(vx)},${fmt(vy - ri)}q0,${rif},${rif},${rif}h${nrif}z`);
+        filletParts.push(`M${fmt(vx - ri)},${fmt(vy)}q${rif},0,${rif},${rif}v${nrif}z`);
+      } else {
+        // "bl"
+        filletParts.push(`M${fmt(vx)},${fmt(vy - ri)}q0,${rif},${nrif},${rif}h${rif}z`);
+        filletParts.push(`M${fmt(vx + ri)},${fmt(vy)}q${nrif},0,${nrif},${rif}v${nrif}z`);
+      }
+    }
+  }
+
+  const allParts = pathParts.concat(filletParts);
+  return { path: allParts.join(" "), fillets: "" };
 }
