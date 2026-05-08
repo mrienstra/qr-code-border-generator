@@ -708,14 +708,14 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
             const neInComp = compPixels.has(key(vx, vy - 1));
             const swInComp = compPixels.has(key(vx - 1, vy));
             if (neInComp && swInComp) {
-              if (isLCornerPixel(vx, vy - 1, "BL") || isLCornerPixel(vx - 1, vy, "TR")) {
+              if (isLCornerPixel(vx, vy - 1, "BL", allPx) || isLCornerPixel(vx - 1, vy, "TR", allPx)) {
                 const r = v.turn === "right" ? ro : v.turn === "left" ? ri : 0;
                 if (r > 0) { plans[i] = { radius: r, mode: "checkerboardBypass" }; continue; }
               }
             }
             if (v.turn === "right") {
-              if (neInComp && !swInComp && isLCornerPixel(vx - 1, vy, "TR")) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
-              if (swInComp && !neInComp && isLCornerPixel(vx, vy - 1, "BL")) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
+              if (neInComp && !swInComp && isLCornerPixel(vx - 1, vy, "TR", allPx)) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
+              if (swInComp && !neInComp && isLCornerPixel(vx, vy - 1, "BL", allPx)) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
             }
           } else {
             const hasNW = allPx.has(key(vx - 1, vy - 1));
@@ -724,14 +724,14 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
               const nwInComp = compPixels.has(key(vx - 1, vy - 1));
               const seInComp = compPixels.has(key(vx, vy));
               if (nwInComp && seInComp) {
-                if (isLCornerPixel(vx - 1, vy - 1, "BR") || isLCornerPixel(vx, vy, "TL")) {
+                if (isLCornerPixel(vx - 1, vy - 1, "BR", allPx) || isLCornerPixel(vx, vy, "TL", allPx)) {
                   const r = v.turn === "right" ? ro : v.turn === "left" ? ri : 0;
                   if (r > 0) { plans[i] = { radius: r, mode: "checkerboardBypass" }; continue; }
                 }
               }
               if (v.turn === "right") {
-                if (nwInComp && !seInComp && isLCornerPixel(vx, vy, "TL")) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
-                if (seInComp && !nwInComp && isLCornerPixel(vx - 1, vy - 1, "BR")) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
+                if (nwInComp && !seInComp && isLCornerPixel(vx, vy, "TL", allPx)) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
+                if (seInComp && !nwInComp && isLCornerPixel(vx - 1, vy - 1, "BR", allPx)) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
               }
             }
           }
@@ -949,18 +949,11 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
     return p.join("");
   }
 
-  // --- Step 4b: Emit CCW notch subpaths for L-corners ---
-  // At L-corner vertices, the contour uses the normal ro arc but per-pixel
-  // mode uses r=1. We emit CCW crescent subpaths to carve out the area
-  // between the ro arc and the r=1 arc, matching per-pixel visually.
-  // The notch directions are determined by the corner TYPE (TL/TR/BL/BR),
-  // not the boundary edge directions, since the boundary may traverse
-  // through this vertex from a different pixel's corner.
-  //
-  // Per corner type, the "incoming" and "outgoing" directions (from the
-  // pixel's own CW boundary perspective) are:
+  // L-corner direction mappings: per corner type, the "incoming" and
+  // "outgoing" directions (from the pixel's own CW boundary perspective).
   //   TL: in=(0,-1) out=(1,0)   TR: in=(1,0) out=(0,1)
   //   BL: in=(-1,0) out=(0,-1)  BR: in=(0,1) out=(-1,0)
+  // Used by annotateLoopVertices, lcArcFilletPoint, and serializeLoopPath.
   const LC_DIRS = {
     TL: { pdx: 0, pdy: -1, odx: 1, ody: 0 },
     TR: { pdx: 1, pdy: 0, odx: 0, ody: 1 },
@@ -968,15 +961,8 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
     BR: { pdx: 0, pdy: 1, odx: -1, ody: 0 },
   };
 
-  function emitLCornerNotches(vertices, ro) {
-    // L-corner notch crescents are no longer needed — radiusAt() now returns
-    // r=1 for ALL fullRadius vertices (not just those with adjacent left turns).
-    // The main path traces the full r=1 arc directly, so there's no gap between
-    // an r=0.5 arc and r=1 arc to fill.
-    return "";
-  }
 
-  // --- Step 5: Check if outer boundary already handles a hole ---
+  // --- Step 5: Check if outer boundary already handles a hole via winding ---
   // The outer boundary can enter holes via "pinch points" when the trace
   // approaches from certain directions, creating local CCW sub-loops.
   // At these holes the outer boundary already produces winding=0, so adding
@@ -1000,7 +986,7 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
     return winding;
   }
 
-  // --- Step 6: Handle checkerboard vertices between diagonal holes ---
+  // --- Step 6: Checkerboard notch subpaths ---
   // At a checkerboard vertex (2 filled cells on one diagonal, 2 empty on the
   // other), per-pixel mode creates rOuter arcs on the filled pixels' exposed
   // convex corners — no rInner fillets apply since the filled pixels have no
@@ -1014,10 +1000,10 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
   //      matching the per-pixel convex arcs of the two filled pixels.
 
   // Check if a pixel has an L-corner at a specific corner type
-  function isLCornerPixel(px, py, corner) {
-    if (!allPixels.has(key(px, py))) return false;
-    const hasL = allPixels.has(key(px - 1, py)), hasR = allPixels.has(key(px + 1, py));
-    const hasU = allPixels.has(key(px, py - 1)), hasD = allPixels.has(key(px, py + 1));
+  function isLCornerPixel(px, py, corner, allPx) {
+    if (!allPx.has(key(px, py))) return false;
+    const hasL = allPx.has(key(px - 1, py)), hasR = allPx.has(key(px + 1, py));
+    const hasU = allPx.has(key(px, py - 1)), hasD = allPx.has(key(px, py + 1));
     if (corner === "TL") return !hasL && !hasU && hasR && hasD;
     if (corner === "TR") return !hasR && !hasU && hasL && hasD;
     if (corner === "BL") return !hasL && !hasD && hasR && hasU;
@@ -1025,7 +1011,8 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
     return false;
   }
 
-  function emitCheckerboardNotches(holeVerts, ro, emittedSet) {
+  function emitCheckerboardNotches(holeVerts, ro, emittedSet, ctx) {
+    const { allPixels: allPx, diagConnections: diagConns, fullLCorners: flc, skipCheckerLCorners: skipCLC } = ctx;
     if (ro <= 0) return "";
     const parts = [];
     for (const v of holeVerts) {
@@ -1034,18 +1021,18 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
       if (emittedSet.has(vk)) continue;
       // Skip checkerboard notches at diagonal connection vertices —
       // diagonal fillets handle the fill there instead.
-      if (diagConnections.has(vk)) continue;
+      if (diagConns.has(vk)) continue;
 
       emittedSet.add(vk);
 
       const vxf = fmt(v.x), vyf = fmt(v.y);
-      const hasNW = allPixels.has(key(v.x - 1, v.y - 1));
-      const hasSE = allPixels.has(key(v.x, v.y));
+      const hasNW = allPx.has(key(v.x - 1, v.y - 1));
+      const hasSE = allPx.has(key(v.x, v.y));
 
       if (hasNW && hasSE) {
         // NW-SE diagonal filled: CCW notches carving into NW and SE pixels
-        const nwLC = fullLCorners && !skipCheckerLCorners && isLCornerPixel(v.x - 1, v.y - 1, "BR");
-        const seLC = fullLCorners && !skipCheckerLCorners && isLCornerPixel(v.x, v.y, "TL");
+        const nwLC = flc && !skipCLC && isLCornerPixel(v.x - 1, v.y - 1, "BR", allPx);
+        const seLC = flc && !skipCLC && isLCornerPixel(v.x, v.y, "TL", allPx);
         const r1 = nwLC ? 1 : ro;
         const r2 = seLC ? 1 : ro;
         // When either diagonal pixel has an L-corner, suppress BOTH notch halves.
@@ -1058,9 +1045,9 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
         }
       } else {
         // NE-SW diagonal filled: CCW notches carving into NE and SW pixels
-        const hasNE = allPixels.has(key(v.x, v.y - 1));
-        const neLC = fullLCorners && !skipCheckerLCorners && isLCornerPixel(v.x, v.y - 1, "BL");
-        const swLC = fullLCorners && !skipCheckerLCorners && isLCornerPixel(v.x - 1, v.y, "TR");
+        const hasNE = allPx.has(key(v.x, v.y - 1));
+        const neLC = flc && !skipCLC && isLCornerPixel(v.x, v.y - 1, "BL", allPx);
+        const swLC = flc && !skipCLC && isLCornerPixel(v.x - 1, v.y, "TR", allPx);
         const r1 = neLC ? 1 : ro;
         const r2 = swLC ? 1 : ro;
         if (!neLC && !swLC) {
@@ -1072,7 +1059,7 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
     return parts.join(" ");
   }
 
-  // --- Step 7: Pre-compute diagonal connections ---
+  // --- Step 7: Pre-compute diagonal connections (rendering-only bridges) ---
   // Reuse the same scoring logic as per-pixel mode. For each pixel, check
   // BR and BL diagonals (to avoid duplication). Store the set of connected
   // vertices keyed by "vx,vy" along with the direction ("br" or "bl").
@@ -1129,11 +1116,8 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
     annotateLoopVertices(outerVerts, outerEdges, annotCtx);
     const outerPlans = resolveCornerPlans(outerVerts, outerEdges, planCtx);
     pathParts.push(serializeLoopPath(outerVerts, outerEdges, outerPlans, rOuter, rInner, false));
-    // Emit L-corner notches for outer boundary
-    const lcNotches = emitLCornerNotches(outerVerts, rOuter);
-    if (lcNotches) pathParts.push(lcNotches);
     // Emit checkerboard notches for outer boundary (includes L-corner upgrades)
-    const outerCheckerNotches = emitCheckerboardNotches(outerVerts, rOuter, emittedNotches);
+    const outerCheckerNotches = emitCheckerboardNotches(outerVerts, rOuter, emittedNotches, annotCtx);
     if (outerCheckerNotches) pathParts.push(outerCheckerNotches);
 
     const holes = findHoles(comp);
@@ -1153,11 +1137,8 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
       const holePlans = resolveCornerPlans(holeVerts, holeEdges, planCtx);
       pathParts.push(serializeLoopPath(holeVerts, holeEdges, holePlans, rOuter, rInner, true));
       // Emit rOuter arc notches at checkerboard vertices
-      const notches = emitCheckerboardNotches(holeVerts, rOuter, emittedNotches);
+      const notches = emitCheckerboardNotches(holeVerts, rOuter, emittedNotches, annotCtx);
       if (notches) pathParts.push(notches);
-      // Emit L-corner notches for hole boundary
-      const holeLcNotches = emitLCornerNotches(holeVerts, rOuter);
-      if (holeLcNotches) pathParts.push(holeLcNotches);
     }
   }
 
