@@ -629,23 +629,38 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
       for (let i = 0; i < n; i++) {
         if (vertices[i].turn !== "right") continue;
         const vx = vertices[i].x, vy = vertices[i].y;
+        // Compute traversal directions at this vertex to disambiguate when
+        // the same position is visited multiple times (e.g. pinch points).
+        // Each L-corner type has specific incoming/outgoing directions (LC_DIRS).
+        const prevEdge = edges[(i - 1 + n) % n];
+        const outEdge = edges[i];
+        const inDx = Math.sign(prevEdge.dx), inDy = Math.sign(prevEdge.dy);
+        const outDx = Math.sign(outEdge.dx), outDy = Math.sign(outEdge.dy);
         // TL corner of pixel (vx,vy): adj=left,up absent; opp=right,down present
-        if (compPixels.has(key(vx, vy)) && !allPixels.has(key(vx - 1, vy)) && !allPixels.has(key(vx, vy - 1))
+        // Direction: incoming (0,-1), outgoing (1,0)
+        if (inDx === 0 && inDy === -1 && outDx === 1 && outDy === 0
+            && compPixels.has(key(vx, vy)) && !allPixels.has(key(vx - 1, vy)) && !allPixels.has(key(vx, vy - 1))
             && allPixels.has(key(vx + 1, vy)) && allPixels.has(key(vx, vy + 1))) {
           vertices[i].fullRadius = "TL"; continue;
         }
         // TR corner of pixel (vx-1,vy): adj=right,up absent; opp=left,down present
-        if (compPixels.has(key(vx - 1, vy)) && !allPixels.has(key(vx, vy)) && !allPixels.has(key(vx - 1, vy - 1))
+        // Direction: incoming (1,0), outgoing (0,1)
+        if (inDx === 1 && inDy === 0 && outDx === 0 && outDy === 1
+            && compPixels.has(key(vx - 1, vy)) && !allPixels.has(key(vx, vy)) && !allPixels.has(key(vx - 1, vy - 1))
             && allPixels.has(key(vx - 2, vy)) && allPixels.has(key(vx - 1, vy + 1))) {
           vertices[i].fullRadius = "TR"; continue;
         }
         // BL corner of pixel (vx,vy-1): adj=left,down absent; opp=right,up present
-        if (compPixels.has(key(vx, vy - 1)) && !allPixels.has(key(vx - 1, vy - 1)) && !allPixels.has(key(vx, vy))
+        // Direction: incoming (-1,0), outgoing (0,-1)
+        if (inDx === -1 && inDy === 0 && outDx === 0 && outDy === -1
+            && compPixels.has(key(vx, vy - 1)) && !allPixels.has(key(vx - 1, vy - 1)) && !allPixels.has(key(vx, vy))
             && allPixels.has(key(vx + 1, vy - 1)) && allPixels.has(key(vx, vy - 2))) {
           vertices[i].fullRadius = "BL"; continue;
         }
         // BR corner of pixel (vx-1,vy-1): adj=right,down absent; opp=left,up present
-        if (compPixels.has(key(vx - 1, vy - 1)) && !allPixels.has(key(vx, vy - 1)) && !allPixels.has(key(vx - 1, vy))
+        // Direction: incoming (0,1), outgoing (-1,0)
+        if (inDx === 0 && inDy === 1 && outDx === -1 && outDy === 0
+            && compPixels.has(key(vx - 1, vy - 1)) && !allPixels.has(key(vx, vy - 1)) && !allPixels.has(key(vx - 1, vy))
             && allPixels.has(key(vx - 2, vy - 1)) && allPixels.has(key(vx - 1, vy - 2))) {
           vertices[i].fullRadius = "BR"; continue;
         }
@@ -660,15 +675,69 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
     // the r=0.5 arc is inside the notch crescent — use r=1 so the main path
     // traces the true outer boundary (the full-radius arc).
     function radiusAt(i) {
-      if (vertices[i].checkerboard) return 0;
-      if (vertices[i].diagConnected) return 0;
+      // checkerboard/diagConnected suppress rounding at diagonal crossings,
+      // but NOT for fullRadius L-corners — per-pixel mode still renders
+      // the L-corner arc at these vertices regardless of diagonal neighbors.
+      const hasFR = fullLCorners && vertices[i].fullRadius;
+      if (vertices[i].checkerboard && !hasFR) {
+        // Check if both diagonal pixels are in the SAME component.
+        // When both are in the same component, the boundary visits this
+        // vertex twice — each visit represents one pixel's corner and
+        // should round independently. No notch needed.
+        const vx = vertices[i].x, vy = vertices[i].y;
+        const hasNE = allPixels.has(key(vx, vy - 1));
+        const hasSW = allPixels.has(key(vx - 1, vy));
+        let bothInComp = false;
+        if (hasNE && hasSW) {
+          bothInComp = compPixels.has(key(vx, vy - 1)) && compPixels.has(key(vx - 1, vy));
+        } else {
+          const hasNW = allPixels.has(key(vx - 1, vy - 1));
+          const hasSE = allPixels.has(key(vx, vy));
+          if (hasNW && hasSE) {
+            bothInComp = compPixels.has(key(vx - 1, vy - 1)) && compPixels.has(key(vx, vy));
+          }
+        }
+        if (bothInComp) {
+          // Same component: use normal radius, each visit rounds independently
+          const turn = vertices[i].turn;
+          if (turn === "right") return ro;
+          if (turn === "left") return ri;
+          return 0;
+        }
+        // Different components: the OTHER component's boundary handles
+        // its own pixel. When fullLCorners is active and the other pixel
+        // has an L-corner, use normal rounding (ro) instead of 0 so the
+        // current boundary's pixel still gets its corner rounded.
+        if (fullLCorners && vertices[i].turn === "right") {
+          if (hasNE && hasSW) {
+            // NE-SW diagonal
+            const neInComp = compPixels.has(key(vx, vy - 1));
+            const swInComp = compPixels.has(key(vx - 1, vy));
+            if (neInComp && !swInComp && isLCornerPixel(vx - 1, vy, "TR")) return ro;
+            if (swInComp && !neInComp && isLCornerPixel(vx, vy - 1, "BL")) return ro;
+          } else {
+            // NW-SE diagonal
+            const hasNW2 = allPixels.has(key(vx - 1, vy - 1));
+            const hasSE2 = allPixels.has(key(vx, vy));
+            if (hasNW2 && hasSE2) {
+              const nwInComp = compPixels.has(key(vx - 1, vy - 1));
+              const seInComp = compPixels.has(key(vx, vy));
+              if (nwInComp && !seInComp && isLCornerPixel(vx, vy, "TL")) return ro;
+              if (seInComp && !nwInComp && isLCornerPixel(vx - 1, vy - 1, "BR")) return ro;
+            }
+          }
+        }
+        return 0;
+      }
+      if (vertices[i].diagConnected && !hasFR) return 0;
       const turn = vertices[i].turn;
       if (turn === "right") {
-        if (fullLCorners && vertices[i].fullRadius && ri > 0) {
-          const nextI = (i + 1) % n;
-          const prevI = (i - 1 + n) % n;
-          if (vertices[nextI].turn === "left" || vertices[prevI].turn === "left") return 1;
-        }
+        // All fullRadius L-corner vertices use r=1 on the main path.
+        // When there's an adjacent left turn, the arc is shortened and a
+        // tangent-continuous fillet connects them. When there's no adjacent
+        // left turn, the arc is a full quarter-circle. Either way, the
+        // L-corner notch crescent is not needed.
+        if (fullLCorners && vertices[i].fullRadius) return 1;
         return ro;
       }
       if (turn === "left") return ri;
@@ -687,8 +756,6 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
     const startY = vertices[0].y - prevDy * r0;
 
     p.push(`M${fmt(startX)},${fmt(startY)}`);
-    const _dbg = globalThis._CONTOUR_DEBUG;
-    if (_dbg) console.log(`[START] M(${startX}, ${startY})  vertex[0]=(${vertices[0].x},${vertices[0].y}) r0=${r0} prevDir=(${prevDx},${prevDy})`);
 
     // Arc sweep for rOuter convex corners: always 1 (CW in screen coords).
     // For outer boundaries (CW), this curves inward toward the filled region.
@@ -705,11 +772,6 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
       // Direction of outgoing edge
       const odx = Math.sign(edge.dx);
       const ody = Math.sign(edge.dy);
-
-      if (_dbg) {
-        const curX_approx = `v(${vertices[i].x},${vertices[i].y})`;
-        console.log(`\n[i=${i}] ${curX_approx} turn=${vertices[i].turn} r=${r} FR=${vertices[i].fullRadius||'-'} prevDir=(${prevDx},${prevDy}) outDir=(${odx},${ody})`);
-      }
 
       if (vertices[i].turn === "right" && r > 0) {
         if (r === 1 && fullLCorners && vertices[i].fullRadius) {
@@ -743,7 +805,6 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
               const dx = sign * Math.sqrt(Math.max(0, 1 - dy * dy));
               startX = arcCx + dx; startY = line;
             }
-            if (_dbg) console.log(`  -> ARC r=1 start shortened: from (${startX.toFixed(4)},${startY.toFixed(4)})`);
           }
 
           // Compute end point (may be shortened)
@@ -766,7 +827,6 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
             tgtX = vertices[i].x + lodx * r;
             tgtY = vertices[i].y + lody * r;
           }
-          if (_dbg) console.log(`  -> ARC r=1 (shortened=${shortenStart?'S':''}${shortenEnd?'E':''}): to (${tgtX.toFixed(4)},${tgtY.toFixed(4)})`);
           p.push(`A1,1,0,0,${sweep},${fmt(tgtX)},${fmt(tgtY)}`);
         } else {
           // Standard convex corner arc
@@ -774,11 +834,6 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
           // Displacement = outDir*r + prevDir*r
           const adx = fmt(odx * r + prevDx * r);
           const ady = fmt(ody * r + prevDy * r);
-          if (_dbg) {
-            const fromX = vertices[i].x - prevDx * r, fromY = vertices[i].y - prevDy * r;
-            const toX = vertices[i].x + odx * r, toY = vertices[i].y + ody * r;
-            console.log(`  -> ARC r=${r}: from (${fromX},${fromY}) to (${toX},${toY})  cmd: a${adx},${ady}`);
-          }
           p.push(`a${fmt(r)},${fmt(r)},0,0,${sweep},${adx},${ady}`);
         }
       } else if (vertices[i].turn === "left" && r > 0) {
@@ -787,7 +842,6 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
         const prevFR = fullLCorners && vertices[prevI].fullRadius && edges[(i - 1 + n) % n].len <= 1;
         const nextI = (i + 1) % n;
         const nextFR = fullLCorners && vertices[nextI].fullRadius && edges[i].len <= 1;
-        if (_dbg) console.log(`  FILLET: prevFR=${prevFR||false} nextFR=${nextFR||false} ri=${ri}`);
         if (prevFR && nextFR && ri > 0) {
           // Both adjacent vertices have L-corners: fillet connects two r=1 arcs
           const vx = vertices[i].x, vy = vertices[i].y;
@@ -838,12 +892,6 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
             const alpha = ((eB.px - eA.px) * (-eB.ty) - (-eB.tx) * (eB.py - eA.py)) / det;
             cpx = eA.px + alpha * eA.tx; cpy = eA.py + alpha * eA.ty;
           }
-          if (_dbg) {
-            console.log(`  -> BOTH-FR FILLET:`);
-            console.log(`     eA: pos=(${eA.px.toFixed(4)},${eA.py.toFixed(4)}) tan=(${eA.tx.toFixed(4)},${eA.ty.toFixed(4)})`);
-            console.log(`     eB: pos=(${eB.px.toFixed(4)},${eB.py.toFixed(4)}) tan=(${eB.tx.toFixed(4)},${eB.ty.toFixed(4)})`);
-            console.log(`     CP=(${cpx.toFixed(4)},${cpy.toFixed(4)})`);
-          }
           p.push(`Q${fmt(cpx)},${fmt(cpy)},${fmt(eB.px)},${fmt(eB.py)}`);
         } else if (prevFR && ri > 0) {
           // Previous vertex has L-corner: fillet starts on the r=1 arc
@@ -875,12 +923,6 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
           } else {
             const alpha = ((eB.px - eA.px) * (-eB.ty) - (-eB.tx) * (eB.py - eA.py)) / det;
             cpx = eA.px + alpha * eA.tx; cpy = eA.py + alpha * eA.ty;
-          }
-          if (_dbg) {
-            console.log(`  -> PREV-FR FILLET: arcCenter=(${arcCx},${arcCy}) isH=${isH} line=${line} sign=${sign}`);
-            console.log(`     eA: pos=(${eA.px.toFixed(4)},${eA.py.toFixed(4)}) tan=(${eA.tx.toFixed(4)},${eA.ty.toFixed(4)})`);
-            console.log(`     eB: pos=(${eB.px.toFixed(4)},${eB.py.toFixed(4)}) tan=(${eB.tx.toFixed(4)},${eB.ty.toFixed(4)})`);
-            console.log(`     CP=(${cpx.toFixed(4)},${cpy.toFixed(4)})`);
           }
           // Cursor is already at eA (shortened r=1 arc landed here), just emit Q
           p.push(`Q${fmt(cpx)},${fmt(cpy)},${fmt(eB.px)},${fmt(eB.py)}`);
@@ -915,12 +957,6 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
             const alpha = ((eB.px - eA.px) * (-eB.ty) - (-eB.tx) * (eB.py - eA.py)) / det;
             cpx = eA.px + alpha * eA.tx; cpy = eA.py + alpha * eA.ty;
           }
-          if (_dbg) {
-            console.log(`  -> NEXT-FR FILLET: arcCenter=(${arcCx},${arcCy}) isH=${isH} line=${line} sign=${sign}`);
-            console.log(`     eA: pos=(${eA.px.toFixed(4)},${eA.py.toFixed(4)}) tan=(${eA.tx.toFixed(4)},${eA.ty.toFixed(4)})`);
-            console.log(`     eB: pos=(${eB.px.toFixed(4)},${eB.py.toFixed(4)}) tan=(${eB.tx.toFixed(4)},${eB.ty.toFixed(4)})`);
-            console.log(`     CP=(${cpx.toFixed(4)},${cpy.toFixed(4)})`);
-          }
           p.push(`Q${fmt(cpx)},${fmt(cpy)},${fmt(eB.px)},${fmt(eB.py)}`);
         } else {
           // Standard fillet
@@ -935,7 +971,6 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
 
       // Emit the edge segment (shortened by radii at both ends)
       const edgeLen = edge.len - r - rNext;
-      if (_dbg) console.log(`  EDGE: len=${edge.len} - r=${r} - rNext=${rNext} = ${edgeLen}  dir=(${odx},${ody})`);
       if (edgeLen > 0.001) {
         if (ody === 0) p.push(`h${fmt(odx * edgeLen)}`);
         else p.push(`v${fmt(ody * edgeLen)}`);
@@ -970,70 +1005,11 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
   };
 
   function emitLCornerNotches(vertices, ro) {
-    if (!fullLCorners || ro <= 0) return "";
-    const n = vertices.length;
-    const parts = [];
-    for (let i = 0; i < n; i++) {
-      if (!vertices[i].fullRadius) continue;
-      if (vertices[i].diagConnected || vertices[i].checkerboard) continue;
-      // Skip notch if main path already uses r=1 arc for this vertex
-      // (radiusAt returned 1 because an adjacent left turn exists)
-      const nextI_n = (i + 1) % n;
-      const prevI_n = (i - 1 + n) % n;
-      if (rInner > 0 && (vertices[nextI_n].turn === "left" || vertices[prevI_n].turn === "left")) continue;
-      const vx = vertices[i].x, vy = vertices[i].y;
-      const { pdx, pdy, odx, ody } = LC_DIRS[vertices[i].fullRadius];
-      // Arc center for the r=1 corner
-      const arcCx = vx + odx - pdx, arcCy = vy + ody - pdy;
-      // P1 = ro arc start (incoming edge), P2 = r=1 arc start
-      // P3 = r=1 arc end (outgoing edge), P4 = ro arc end
-      const p1x = vx - pdx * ro, p1y = vy - pdy * ro;
-      const p2x = vx - pdx, p2y = vy - pdy;
-      let p3x = vx + odx, p3y = vy + ody;
-      const p4x = vx + odx * ro, p4y = vy + ody * ro;
-      // If the next vertex is a left turn (concave) with ri > 0,
-      // shorten the r=1 arc to stop where the inner fillet starts
-      const nextI = (i + 1) % n;
-      if (rInner > 0 && vertices[nextI].turn === "left") {
-        // The fillet at the next vertex starts ri before it along the edge
-        // from this vertex. That edge goes in the odx/ody direction.
-        // Find where the ri-offset line intersects the r=1 arc.
-        const isH = ody !== 0; // edge is vertical → horizontal offset line
-        const nextV = vertices[nextI];
-        const line = isH ? (nextV.y - ody * rInner) : (nextV.x - odx * rInner);
-        const sign = isH ? Math.sign(nextV.x - arcCx) : Math.sign(nextV.y - arcCy);
-        if (isH) {
-          const dy = line - arcCy;
-          const dx = sign * Math.sqrt(Math.max(0, 1 - dy * dy));
-          p3x = arcCx + dx; p3y = line;
-        } else {
-          const dx = line - arcCx;
-          const dy = sign * Math.sqrt(Math.max(0, 1 - dx * dx));
-          p3x = line; p3y = arcCy + dy;
-        }
-      }
-      // CCW crescent: P1 → P2 → CW arc r=1 → P3 → (edge) → P4 → CCW arc ro → P1
-      // When the arc was shortened, route P3→P4 via the straight edge
-      // (go to the edge at x or y of P4, then along the edge to P4)
-      let p3ToP4 = `L${fmt(p4x)},${fmt(p4y)}`;
-      if (p3x !== p4x && p3y !== p4y) {
-        // Diagonal: route through the corner where the edge meets P4's axis
-        const midX = odx !== 0 ? p4x : p3x;
-        const midY = ody !== 0 ? p4y : p3y;
-        // Go to straight edge first (matching p4's perpendicular coord),
-        // then along edge to p4
-        p3ToP4 = `L${fmt(p4x)},${fmt(p3y)}L${fmt(p4x)},${fmt(p4y)}`;
-      }
-      parts.push(
-        `M${fmt(p1x)},${fmt(p1y)}` +
-        `L${fmt(p2x)},${fmt(p2y)}` +
-        `A1,1,0,0,1,${fmt(p3x)},${fmt(p3y)}` +
-        p3ToP4 +
-        `A${fmt(ro)},${fmt(ro)},0,0,0,${fmt(p1x)},${fmt(p1y)}` +
-        `Z`
-      );
-    }
-    return parts.join(" ");
+    // L-corner notch crescents are no longer needed — radiusAt() now returns
+    // r=1 for ALL fullRadius vertices (not just those with adjacent left turns).
+    // The main path traces the full r=1 arc directly, so there's no gap between
+    // an r=0.5 arc and r=1 arc to fill.
+    return "";
   }
 
   // --- Step 5: Check if outer boundary already handles a hole ---
@@ -1098,7 +1074,7 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
     return false;
   }
 
-  function emitCheckerboardNotches(holeVerts, ro, emittedSet) {
+  function emitCheckerboardNotches(holeVerts, ro, emittedSet, compPixels) {
     if (ro <= 0) return "";
     const parts = [];
     for (const v of holeVerts) {
@@ -1108,6 +1084,26 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
       // Skip checkerboard notches at diagonal connection vertices —
       // diagonal fillets handle the fill there instead.
       if (diagConnections.has(vk)) continue;
+
+      // Skip notches when both diagonal pixels are in the same component.
+      // The boundary visits this vertex twice, each visit rounds independently,
+      // so no separate notch subpath is needed.
+      if (compPixels) {
+        const hasNE = allPixels.has(key(v.x, v.y - 1));
+        const hasSW = allPixels.has(key(v.x - 1, v.y));
+        let bothInComp = false;
+        if (hasNE && hasSW) {
+          bothInComp = compPixels.has(key(v.x, v.y - 1)) && compPixels.has(key(v.x - 1, v.y));
+        } else {
+          const hasNW2 = allPixels.has(key(v.x - 1, v.y - 1));
+          const hasSE2 = allPixels.has(key(v.x, v.y));
+          if (hasNW2 && hasSE2) {
+            bothInComp = compPixels.has(key(v.x - 1, v.y - 1)) && compPixels.has(key(v.x, v.y));
+          }
+        }
+        if (bothInComp) continue;
+      }
+
       emittedSet.add(vk);
 
       const vxf = fmt(v.x), vyf = fmt(v.y);
@@ -1117,25 +1113,36 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
       if (hasNW && hasSE) {
         // NW-SE diagonal filled: CCW notches carving into NW and SE pixels
         // When fullLCorners is on and skipCheckerLCorners is off, use r=1 if the pixel has an L-corner
-        const r1 = (fullLCorners && !skipCheckerLCorners && isLCornerPixel(v.x - 1, v.y - 1, "BR")) ? 1 : ro;
-        const r2 = (fullLCorners && !skipCheckerLCorners && isLCornerPixel(v.x, v.y, "TL")) ? 1 : ro;
-        // Notch 1 (upper-left, carves BR of NW pixel):
-        //   vertex → up → arc left-down (sweep=1) → close right
-        parts.push(`M${vxf},${vyf}L${vxf},${fmt(v.y - r1)}a${fmt(r1)},${fmt(r1)},0,0,1,${fmt(-r1)},${fmt(r1)}Z`);
-        // Notch 2 (lower-right, carves TL of SE pixel):
-        //   vertex → down → arc right-up (sweep=1) → close left
-        parts.push(`M${vxf},${vyf}L${vxf},${fmt(v.y + r2)}a${fmt(r2)},${fmt(r2)},0,0,1,${fmt(r2)},${fmt(-r2)}Z`);
+        const nwLC = fullLCorners && !skipCheckerLCorners && isLCornerPixel(v.x - 1, v.y - 1, "BR");
+        const seLC = fullLCorners && !skipCheckerLCorners && isLCornerPixel(v.x, v.y, "TL");
+        const r1 = nwLC ? 1 : ro;
+        const r2 = seLC ? 1 : ro;
+        // When either diagonal pixel has an L-corner, suppress BOTH notch halves:
+        // - The non-L-corner side's boundary now uses ro (not 0), so its corner is
+        //   rounded — the notch would double-fill the corner area.
+        // - The L-corner side's area is already covered by the main body boundary
+        //   (which includes the L-corner arc) — the notch extends beyond what
+        //   per-pixel mode covers into the gap between the arc and the vertex.
+        if (!nwLC && !seLC) {
+          // Notch 1 (upper-left, carves BR of NW pixel):
+          parts.push(`M${vxf},${vyf}L${vxf},${fmt(v.y - r1)}a${fmt(r1)},${fmt(r1)},0,0,1,${fmt(-r1)},${fmt(r1)}Z`);
+          // Notch 2 (lower-right, carves TL of SE pixel):
+          parts.push(`M${vxf},${vyf}L${vxf},${fmt(v.y + r2)}a${fmt(r2)},${fmt(r2)},0,0,1,${fmt(r2)},${fmt(-r2)}Z`);
+        }
       } else {
         // NE-SW diagonal filled: CCW notches carving into NE and SW pixels
         const hasNE = allPixels.has(key(v.x, v.y - 1));
-        const r1 = (fullLCorners && !skipCheckerLCorners && isLCornerPixel(v.x, v.y - 1, "BL")) ? 1 : ro;
-        const r2 = (fullLCorners && !skipCheckerLCorners && isLCornerPixel(v.x - 1, v.y, "TR")) ? 1 : ro;
-        // Notch 1 (upper-right, carves BL of NE pixel):
-        //   vertex → right → arc up-left (sweep=1) → close down
-        parts.push(`M${vxf},${vyf}L${fmt(v.x + r1)},${vyf}a${fmt(r1)},${fmt(r1)},0,0,1,${fmt(-r1)},${fmt(-r1)}Z`);
-        // Notch 2 (lower-left, carves TR of SW pixel):
-        //   vertex → left → arc down-right (sweep=1) → close up
-        parts.push(`M${vxf},${vyf}L${fmt(v.x - r2)},${vyf}a${fmt(r2)},${fmt(r2)},0,0,1,${fmt(r2)},${fmt(r2)}Z`);
+        const neLC = fullLCorners && !skipCheckerLCorners && isLCornerPixel(v.x, v.y - 1, "BL");
+        const swLC = fullLCorners && !skipCheckerLCorners && isLCornerPixel(v.x - 1, v.y, "TR");
+        const r1 = neLC ? 1 : ro;
+        const r2 = swLC ? 1 : ro;
+        // Same logic: suppress both halves when either pixel has L-corner
+        if (!neLC && !swLC) {
+          // Notch 1 (upper-right, carves BL of NE pixel):
+          parts.push(`M${vxf},${vyf}L${fmt(v.x + r1)},${vyf}a${fmt(r1)},${fmt(r1)},0,0,1,${fmt(-r1)},${fmt(-r1)}Z`);
+          // Notch 2 (lower-left, carves TR of SW pixel):
+          parts.push(`M${vxf},${vyf}L${fmt(v.x - r2)},${vyf}a${fmt(r2)},${fmt(r2)},0,0,1,${fmt(r2)},${fmt(r2)}Z`);
+        }
       }
     }
     return parts.join(" ");
@@ -1205,7 +1212,7 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
     const lcNotches = emitLCornerNotches(outerVerts, rOuter);
     if (lcNotches) pathParts.push(lcNotches);
     // Emit checkerboard notches for outer boundary (includes L-corner upgrades)
-    const outerCheckerNotches = emitCheckerboardNotches(outerVerts, rOuter, emittedNotches);
+    const outerCheckerNotches = emitCheckerboardNotches(outerVerts, rOuter, emittedNotches, comp);
     if (outerCheckerNotches) pathParts.push(outerCheckerNotches);
 
     const holes = findHoles(comp);
@@ -1224,7 +1231,7 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
       if (diagConnections.size > 0) markDiagConnectedVertices(holeVerts, diagConnections);
       pathParts.push(emitPath(holeVerts, rOuter, rInner, true, comp));
       // Emit rOuter arc notches at checkerboard vertices
-      const notches = emitCheckerboardNotches(holeVerts, rOuter, emittedNotches);
+      const notches = emitCheckerboardNotches(holeVerts, rOuter, emittedNotches, comp);
       if (notches) pathParts.push(notches);
       // Emit L-corner notches for hole boundary
       const holeLcNotches = emitLCornerNotches(holeVerts, rOuter);
