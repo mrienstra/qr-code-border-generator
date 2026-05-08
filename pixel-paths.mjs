@@ -656,11 +656,21 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
     // For holes, traceHoleBoundary already swapped the labels, so same logic applies.
     // At checkerboard vertices, suppress rInner — per-pixel mode has no inner
     // fillet there (filled pixels have convex, not concave, corners).
+    // When vertex i has fullRadius and vertex i+1 is a concave turn with ri > 0,
+    // the r=0.5 arc is inside the notch crescent — use r=1 so the main path
+    // traces the true outer boundary (the full-radius arc).
     function radiusAt(i) {
       if (vertices[i].checkerboard) return 0;
       if (vertices[i].diagConnected) return 0;
       const turn = vertices[i].turn;
-      if (turn === "right") return ro;
+      if (turn === "right") {
+        if (fullLCorners && vertices[i].fullRadius && ri > 0) {
+          const nextI = (i + 1) % n;
+          const prevI = (i - 1 + n) % n;
+          if (vertices[nextI].turn === "left" || vertices[prevI].turn === "left") return 1;
+        }
+        return ro;
+      }
       if (turn === "left") return ri;
       return 0;
     }
@@ -677,6 +687,8 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
     const startY = vertices[0].y - prevDy * r0;
 
     p.push(`M${fmt(startX)},${fmt(startY)}`);
+    const _dbg = globalThis._CONTOUR_DEBUG;
+    if (_dbg) console.log(`[START] M(${startX}, ${startY})  vertex[0]=(${vertices[0].x},${vertices[0].y}) r0=${r0} prevDir=(${prevDx},${prevDy})`);
 
     // Arc sweep for rOuter convex corners: always 1 (CW in screen coords).
     // For outer boundaries (CW), this curves inward toward the filled region.
@@ -694,26 +706,236 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
       const odx = Math.sign(edge.dx);
       const ody = Math.sign(edge.dy);
 
+      if (_dbg) {
+        const curX_approx = `v(${vertices[i].x},${vertices[i].y})`;
+        console.log(`\n[i=${i}] ${curX_approx} turn=${vertices[i].turn} r=${r} FR=${vertices[i].fullRadius||'-'} prevDir=(${prevDx},${prevDy}) outDir=(${odx},${ody})`);
+      }
+
       if (vertices[i].turn === "right" && r > 0) {
-        // Convex corner: arc
-        // Current pos: vertex - prevDir * r. Target: vertex + outDir * r.
-        // Displacement = outDir*r + prevDir*r
-        const adx = fmt(odx * r + prevDx * r);
-        const ady = fmt(ody * r + prevDy * r);
-        p.push(`a${fmt(r)},${fmt(r)},0,0,${sweep},${adx},${ady}`);
+        if (r === 1 && fullLCorners && vertices[i].fullRadius) {
+          // Full-radius L-corner with ri > 0: arc may be shortened on either/both sides
+          const { pdx, pdy, odx: lodx, ody: lody } = LC_DIRS[vertices[i].fullRadius];
+          const arcCx = vertices[i].x + lodx - pdx, arcCy = vertices[i].y + lody - pdy;
+
+          // Check outgoing side: shorten only if next vertex is a left turn
+          // AND it's immediately adjacent (edge length = 1, meaning the arc
+          // and fillet overlap). When there's a straight edge between them
+          // (edge length >= 2), the full quarter-circle arc is correct.
+          const nextI = (i + 1) % n;
+          const shortenEnd = vertices[nextI].turn === "left" && edges[i].len <= 1;
+          // Check incoming side: same logic for previous vertex
+          const prevI_lc = (i - 1 + n) % n;
+          const shortenStart = vertices[prevI_lc].turn === "left" && edges[(i - 1 + n) % n].len <= 1;
+
+          // Compute start point (may be shortened)
+          let startX, startY;
+          if (shortenStart) {
+            const pv = vertices[prevI_lc];
+            const isH = prevDx !== 0;
+            const line = isH ? (pv.x + prevDx * ri) : (pv.y + prevDy * ri);
+            const sign = isH ? Math.sign(pv.y - arcCy) : Math.sign(pv.x - arcCx);
+            if (isH) {
+              const dx = line - arcCx;
+              const dy = sign * Math.sqrt(Math.max(0, 1 - dx * dx));
+              startX = line; startY = arcCy + dy;
+            } else {
+              const dy = line - arcCy;
+              const dx = sign * Math.sqrt(Math.max(0, 1 - dy * dy));
+              startX = arcCx + dx; startY = line;
+            }
+            if (_dbg) console.log(`  -> ARC r=1 start shortened: from (${startX.toFixed(4)},${startY.toFixed(4)})`);
+          }
+
+          // Compute end point (may be shortened)
+          let tgtX, tgtY;
+          if (shortenEnd) {
+            const nv = vertices[nextI];
+            const isH = ody !== 0;
+            const line = isH ? (nv.y - ody * ri) : (nv.x - odx * ri);
+            const sign = isH ? Math.sign(nv.x - arcCx) : Math.sign(nv.y - arcCy);
+            if (isH) {
+              const dy = line - arcCy;
+              const dx = sign * Math.sqrt(Math.max(0, 1 - dy * dy));
+              tgtX = arcCx + dx; tgtY = line;
+            } else {
+              const dx = line - arcCx;
+              const dy = sign * Math.sqrt(Math.max(0, 1 - dx * dx));
+              tgtX = line; tgtY = arcCy + dy;
+            }
+          } else {
+            tgtX = vertices[i].x + lodx * r;
+            tgtY = vertices[i].y + lody * r;
+          }
+          if (_dbg) console.log(`  -> ARC r=1 (shortened=${shortenStart?'S':''}${shortenEnd?'E':''}): to (${tgtX.toFixed(4)},${tgtY.toFixed(4)})`);
+          p.push(`A1,1,0,0,${sweep},${fmt(tgtX)},${fmt(tgtY)}`);
+        } else {
+          // Standard convex corner arc
+          // Current pos: vertex - prevDir * r. Target: vertex + outDir * r.
+          // Displacement = outDir*r + prevDir*r
+          const adx = fmt(odx * r + prevDx * r);
+          const ady = fmt(ody * r + prevDy * r);
+          if (_dbg) {
+            const fromX = vertices[i].x - prevDx * r, fromY = vertices[i].y - prevDy * r;
+            const toX = vertices[i].x + odx * r, toY = vertices[i].y + ody * r;
+            console.log(`  -> ARC r=${r}: from (${fromX},${fromY}) to (${toX},${toY})  cmd: a${adx},${ady}`);
+          }
+          p.push(`a${fmt(r)},${fmt(r)},0,0,${sweep},${adx},${ady}`);
+        }
       } else if (vertices[i].turn === "left" && r > 0) {
         // Concave corner: quadratic Bézier fillet
-        // Control point: at the vertex itself (relative to start)
-        const cpx = prevDx * r;
-        const cpy = prevDy * r;
-        const endx = prevDx * r + odx * r;
-        const endy = prevDy * r + ody * r;
-        p.push(`q${fmt(cpx)},${fmt(cpy)},${fmt(endx)},${fmt(endy)}`);
+        const prevI = (i - 1 + n) % n;
+        const prevFR = fullLCorners && vertices[prevI].fullRadius && edges[(i - 1 + n) % n].len <= 1;
+        const nextI = (i + 1) % n;
+        const nextFR = fullLCorners && vertices[nextI].fullRadius && edges[i].len <= 1;
+        if (_dbg) console.log(`  FILLET: prevFR=${prevFR||false} nextFR=${nextFR||false} ri=${ri}`);
+        if (prevFR && nextFR && ri > 0) {
+          // Both adjacent vertices have L-corners: fillet connects two r=1 arcs
+          const vx = vertices[i].x, vy = vertices[i].y;
+          // eA: intersection on previous L-corner's r=1 arc
+          const lcPrev = vertices[prevI];
+          const { pdx: ppdx, pdy: ppdy, odx: plodx, ody: plody } = LC_DIRS[lcPrev.fullRadius];
+          const arcCxP = lcPrev.x + plodx - ppdx, arcCyP = lcPrev.y + plody - ppdy;
+          const isHP = prevDy !== 0;
+          const lineP = isHP ? (vy - prevDy * ri) : (vx - prevDx * ri);
+          const signP = isHP ? Math.sign(vx - arcCxP) : Math.sign(vy - arcCyP);
+          let eA;
+          if (isHP) {
+            const dy = lineP - arcCyP;
+            const dx = signP * Math.sqrt(Math.max(0, 1 - dy * dy));
+            const len = Math.hypot(dx, dy);
+            eA = { px: arcCxP + dx, py: lineP, tx: dy / len, ty: -dx / len };
+          } else {
+            const dx = lineP - arcCxP;
+            const dy = signP * Math.sqrt(Math.max(0, 1 - dx * dx));
+            const len = Math.hypot(dx, dy);
+            eA = { px: lineP, py: arcCyP + dy, tx: dy / len, ty: -dx / len };
+          }
+          // eB: intersection on next L-corner's r=1 arc
+          const lcNext = vertices[nextI];
+          const { pdx: npdx, pdy: npdy, odx: nlodx, ody: nlody } = LC_DIRS[lcNext.fullRadius];
+          const arcCxN = lcNext.x + nlodx - npdx, arcCyN = lcNext.y + nlody - npdy;
+          const isHN = odx !== 0;
+          const lineN = isHN ? (vx + odx * ri) : (vy + ody * ri);
+          const signN = isHN ? Math.sign(vy - arcCyN) : Math.sign(vx - arcCxN);
+          let eB;
+          if (isHN) {
+            const dx = lineN - arcCxN;
+            const dy = signN * Math.sqrt(Math.max(0, 1 - dx * dx));
+            const len = Math.hypot(dx, dy);
+            eB = { px: lineN, py: arcCyN + dy, tx: dy / len, ty: -dx / len };
+          } else {
+            const dy = lineN - arcCyN;
+            const dx = signN * Math.sqrt(Math.max(0, 1 - dy * dy));
+            const len = Math.hypot(dx, dy);
+            eB = { px: arcCxN + dx, py: lineN, tx: dy / len, ty: -dx / len };
+          }
+          // Control point for tangent continuity
+          const det = eA.tx * (-eB.ty) - (-eB.tx) * eA.ty;
+          let cpx, cpy;
+          if (Math.abs(det) < 1e-10) {
+            cpx = (eA.px + eB.px) / 2; cpy = (eA.py + eB.py) / 2;
+          } else {
+            const alpha = ((eB.px - eA.px) * (-eB.ty) - (-eB.tx) * (eB.py - eA.py)) / det;
+            cpx = eA.px + alpha * eA.tx; cpy = eA.py + alpha * eA.ty;
+          }
+          if (_dbg) {
+            console.log(`  -> BOTH-FR FILLET:`);
+            console.log(`     eA: pos=(${eA.px.toFixed(4)},${eA.py.toFixed(4)}) tan=(${eA.tx.toFixed(4)},${eA.ty.toFixed(4)})`);
+            console.log(`     eB: pos=(${eB.px.toFixed(4)},${eB.py.toFixed(4)}) tan=(${eB.tx.toFixed(4)},${eB.ty.toFixed(4)})`);
+            console.log(`     CP=(${cpx.toFixed(4)},${cpy.toFixed(4)})`);
+          }
+          p.push(`Q${fmt(cpx)},${fmt(cpy)},${fmt(eB.px)},${fmt(eB.py)}`);
+        } else if (prevFR && ri > 0) {
+          // Previous vertex has L-corner: fillet starts on the r=1 arc
+          const vx = vertices[i].x, vy = vertices[i].y;
+          const lcV = vertices[prevI];
+          const { pdx, pdy, odx: lodx, ody: lody } = LC_DIRS[lcV.fullRadius];
+          const arcCx = lcV.x + lodx - pdx, arcCy = lcV.y + lody - pdy;
+          const isH = prevDy !== 0;
+          const line = isH ? (vy - prevDy * ri) : (vx - prevDx * ri);
+          const sign = isH ? Math.sign(vx - arcCx) : Math.sign(vy - arcCy);
+          let eA;
+          if (isH) {
+            const dy = line - arcCy;
+            const dx = sign * Math.sqrt(Math.max(0, 1 - dy * dy));
+            const len = Math.hypot(dx, dy);
+            eA = { px: arcCx + dx, py: line, tx: dy / len, ty: -dx / len };
+          } else {
+            const dx = line - arcCx;
+            const dy = sign * Math.sqrt(Math.max(0, 1 - dx * dx));
+            const len = Math.hypot(dx, dy);
+            eA = { px: line, py: arcCy + dy, tx: dy / len, ty: -dx / len };
+          }
+          const eB = { px: vx + odx * ri, py: vy + ody * ri, tx: -odx, ty: -ody };
+          // Control point for tangent continuity
+          const det = eA.tx * (-eB.ty) - (-eB.tx) * eA.ty;
+          let cpx, cpy;
+          if (Math.abs(det) < 1e-10) {
+            cpx = (eA.px + eB.px) / 2; cpy = (eA.py + eB.py) / 2;
+          } else {
+            const alpha = ((eB.px - eA.px) * (-eB.ty) - (-eB.tx) * (eB.py - eA.py)) / det;
+            cpx = eA.px + alpha * eA.tx; cpy = eA.py + alpha * eA.ty;
+          }
+          if (_dbg) {
+            console.log(`  -> PREV-FR FILLET: arcCenter=(${arcCx},${arcCy}) isH=${isH} line=${line} sign=${sign}`);
+            console.log(`     eA: pos=(${eA.px.toFixed(4)},${eA.py.toFixed(4)}) tan=(${eA.tx.toFixed(4)},${eA.ty.toFixed(4)})`);
+            console.log(`     eB: pos=(${eB.px.toFixed(4)},${eB.py.toFixed(4)}) tan=(${eB.tx.toFixed(4)},${eB.ty.toFixed(4)})`);
+            console.log(`     CP=(${cpx.toFixed(4)},${cpy.toFixed(4)})`);
+          }
+          // Cursor is already at eA (shortened r=1 arc landed here), just emit Q
+          p.push(`Q${fmt(cpx)},${fmt(cpy)},${fmt(eB.px)},${fmt(eB.py)}`);
+        } else if (nextFR && ri > 0) {
+          // Next vertex has L-corner: fillet ends on the r=1 arc
+          const vx = vertices[i].x, vy = vertices[i].y;
+          const lcV = vertices[nextI];
+          const { pdx, pdy, odx: lodx, ody: lody } = LC_DIRS[lcV.fullRadius];
+          const arcCx = lcV.x + lodx - pdx, arcCy = lcV.y + lody - pdy;
+          const isH = odx !== 0; // outgoing edge direction determines offset axis
+          const line = isH ? (vx + odx * ri) : (vy + ody * ri);
+          const sign = isH ? Math.sign(vy - arcCy) : Math.sign(vx - arcCx);
+          let eB;
+          if (isH) {
+            const dx = line - arcCx;
+            const dy = sign * Math.sqrt(Math.max(0, 1 - dx * dx));
+            const len = Math.hypot(dx, dy);
+            eB = { px: line, py: arcCy + dy, tx: dy / len, ty: -dx / len };
+          } else {
+            const dy = line - arcCy;
+            const dx = sign * Math.sqrt(Math.max(0, 1 - dy * dy));
+            const len = Math.hypot(dx, dy);
+            eB = { px: arcCx + dx, py: line, tx: dy / len, ty: -dx / len };
+          }
+          const eA = { px: vx - prevDx * ri, py: vy - prevDy * ri, tx: prevDx, ty: prevDy };
+          // Control point for tangent continuity
+          const det = eA.tx * (-eB.ty) - (-eB.tx) * eA.ty;
+          let cpx, cpy;
+          if (Math.abs(det) < 1e-10) {
+            cpx = (eA.px + eB.px) / 2; cpy = (eA.py + eB.py) / 2;
+          } else {
+            const alpha = ((eB.px - eA.px) * (-eB.ty) - (-eB.tx) * (eB.py - eA.py)) / det;
+            cpx = eA.px + alpha * eA.tx; cpy = eA.py + alpha * eA.ty;
+          }
+          if (_dbg) {
+            console.log(`  -> NEXT-FR FILLET: arcCenter=(${arcCx},${arcCy}) isH=${isH} line=${line} sign=${sign}`);
+            console.log(`     eA: pos=(${eA.px.toFixed(4)},${eA.py.toFixed(4)}) tan=(${eA.tx.toFixed(4)},${eA.ty.toFixed(4)})`);
+            console.log(`     eB: pos=(${eB.px.toFixed(4)},${eB.py.toFixed(4)}) tan=(${eB.tx.toFixed(4)},${eB.ty.toFixed(4)})`);
+            console.log(`     CP=(${cpx.toFixed(4)},${cpy.toFixed(4)})`);
+          }
+          p.push(`Q${fmt(cpx)},${fmt(cpy)},${fmt(eB.px)},${fmt(eB.py)}`);
+        } else {
+          // Standard fillet
+          const cpx = prevDx * r;
+          const cpy = prevDy * r;
+          const endx = prevDx * r + odx * r;
+          const endy = prevDy * r + ody * r;
+          p.push(`q${fmt(cpx)},${fmt(cpy)},${fmt(endx)},${fmt(endy)}`);
+        }
       }
       // else: straight through — no corner command needed
 
       // Emit the edge segment (shortened by radii at both ends)
       const edgeLen = edge.len - r - rNext;
+      if (_dbg) console.log(`  EDGE: len=${edge.len} - r=${r} - rNext=${rNext} = ${edgeLen}  dir=(${odx},${ody})`);
       if (edgeLen > 0.001) {
         if (ody === 0) p.push(`h${fmt(odx * edgeLen)}`);
         else p.push(`v${fmt(ody * edgeLen)}`);
@@ -749,24 +971,64 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
 
   function emitLCornerNotches(vertices, ro) {
     if (!fullLCorners || ro <= 0) return "";
+    const n = vertices.length;
     const parts = [];
-    for (let i = 0; i < vertices.length; i++) {
+    for (let i = 0; i < n; i++) {
       if (!vertices[i].fullRadius) continue;
       if (vertices[i].diagConnected || vertices[i].checkerboard) continue;
+      // Skip notch if main path already uses r=1 arc for this vertex
+      // (radiusAt returned 1 because an adjacent left turn exists)
+      const nextI_n = (i + 1) % n;
+      const prevI_n = (i - 1 + n) % n;
+      if (rInner > 0 && (vertices[nextI_n].turn === "left" || vertices[prevI_n].turn === "left")) continue;
       const vx = vertices[i].x, vy = vertices[i].y;
       const { pdx, pdy, odx, ody } = LC_DIRS[vertices[i].fullRadius];
+      // Arc center for the r=1 corner
+      const arcCx = vx + odx - pdx, arcCy = vy + ody - pdy;
       // P1 = ro arc start (incoming edge), P2 = r=1 arc start
       // P3 = r=1 arc end (outgoing edge), P4 = ro arc end
       const p1x = vx - pdx * ro, p1y = vy - pdy * ro;
       const p2x = vx - pdx, p2y = vy - pdy;
-      const p3x = vx + odx, p3y = vy + ody;
+      let p3x = vx + odx, p3y = vy + ody;
       const p4x = vx + odx * ro, p4y = vy + ody * ro;
-      // CCW crescent: P1 → P2 → CW arc r=1 → P3 → P4 → CCW arc ro → P1
+      // If the next vertex is a left turn (concave) with ri > 0,
+      // shorten the r=1 arc to stop where the inner fillet starts
+      const nextI = (i + 1) % n;
+      if (rInner > 0 && vertices[nextI].turn === "left") {
+        // The fillet at the next vertex starts ri before it along the edge
+        // from this vertex. That edge goes in the odx/ody direction.
+        // Find where the ri-offset line intersects the r=1 arc.
+        const isH = ody !== 0; // edge is vertical → horizontal offset line
+        const nextV = vertices[nextI];
+        const line = isH ? (nextV.y - ody * rInner) : (nextV.x - odx * rInner);
+        const sign = isH ? Math.sign(nextV.x - arcCx) : Math.sign(nextV.y - arcCy);
+        if (isH) {
+          const dy = line - arcCy;
+          const dx = sign * Math.sqrt(Math.max(0, 1 - dy * dy));
+          p3x = arcCx + dx; p3y = line;
+        } else {
+          const dx = line - arcCx;
+          const dy = sign * Math.sqrt(Math.max(0, 1 - dx * dx));
+          p3x = line; p3y = arcCy + dy;
+        }
+      }
+      // CCW crescent: P1 → P2 → CW arc r=1 → P3 → (edge) → P4 → CCW arc ro → P1
+      // When the arc was shortened, route P3→P4 via the straight edge
+      // (go to the edge at x or y of P4, then along the edge to P4)
+      let p3ToP4 = `L${fmt(p4x)},${fmt(p4y)}`;
+      if (p3x !== p4x && p3y !== p4y) {
+        // Diagonal: route through the corner where the edge meets P4's axis
+        const midX = odx !== 0 ? p4x : p3x;
+        const midY = ody !== 0 ? p4y : p3y;
+        // Go to straight edge first (matching p4's perpendicular coord),
+        // then along edge to p4
+        p3ToP4 = `L${fmt(p4x)},${fmt(p3y)}L${fmt(p4x)},${fmt(p4y)}`;
+      }
       parts.push(
         `M${fmt(p1x)},${fmt(p1y)}` +
         `L${fmt(p2x)},${fmt(p2y)}` +
         `A1,1,0,0,1,${fmt(p3x)},${fmt(p3y)}` +
-        `L${fmt(p4x)},${fmt(p4y)}` +
+        p3ToP4 +
         `A${fmt(ro)},${fmt(ro)},0,0,0,${fmt(p1x)},${fmt(p1y)}` +
         `Z`
       );
