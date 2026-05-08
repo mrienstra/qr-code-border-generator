@@ -1,0 +1,723 @@
+/**
+ * Contour tracing SVG path rendering: one closed path per connected component.
+ */
+
+import { key, unkey, snap, fmt } from './pixel-paths.mjs';
+
+// --- Contour tracing: one closed SVG path per connected component ---
+
+export function squaresToContourPath(squares, allPixels, rOuter, rInner, connectDiagonals = 0, fullLCorners = false, skipCheckerLCorners = false) {
+  if (squares.size === 0) return { path: "", fillets: "" };
+
+  // --- Step 1: Find connected components via 4-connected flood fill ---
+  function findComponents(pixels) {
+    const visited = new Set();
+    const components = [];
+    for (const k of pixels) {
+      if (visited.has(k)) continue;
+      const comp = new Set();
+      const stack = [k];
+      while (stack.length) {
+        const cur = stack.pop();
+        if (visited.has(cur)) continue;
+        visited.add(cur);
+        comp.add(cur);
+        const [x, y] = unkey(cur);
+        for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+          const nk = key(x + dx, y + dy);
+          if (pixels.has(nk) && !visited.has(nk)) stack.push(nk);
+        }
+      }
+      components.push(comp);
+    }
+    return components;
+  }
+
+  // --- Step 2: Trace boundary edges of a component ---
+  // Directions: 0=East, 1=South, 2=West, 3=North
+  // Convention: CW walk with filled cells on the right side of the edge.
+  //
+  // We walk along edges of the pixel grid. An edge separates two cells.
+  // Position (x, y, dir) means we're at vertex (x, y) about to walk in direction dir.
+  // The "right" cell (filled side) and "left" cell (empty side) depend on direction:
+  //   East:  right=(x, y),   left=(x, y-1)
+  //   South: right=(x-1, y), left=(x, y)
+  //   West:  right=(x-1, y-1), left=(x-1, y)
+  //   North: right=(x, y-1), left=(x-1, y-1)
+
+  const DX = [1, 0, -1, 0]; // movement delta per direction
+  const DY = [0, 1, 0, -1];
+  // Right cell offset: the filled cell to the right of the edge
+  const RCX = [0, -1, -1, 0];
+  const RCY = [0, 0, -1, -1];
+  // Left cell offset: the empty cell to the left of the edge
+  const LCX = [0, 0, -1, -1];
+  const LCY = [-1, 0, 0, -1];
+
+  function traceBoundary(comp) {
+    // Find topmost-leftmost pixel → start on its top edge, walking East
+    let startX = Infinity, startY = Infinity;
+    for (const k of comp) {
+      const [x, y] = unkey(k);
+      if (y < startY || (y === startY && x < startX)) { startX = x; startY = y; }
+    }
+    // Start at top-left vertex of that pixel, direction East
+    let cx = startX, cy = startY, dir = 0;
+    const startKey = key(startX, startY);
+    const vertices = [];
+
+    do {
+      // Advance one edge in current direction, snapping to avoid float drift
+      const nextX = snap(cx + DX[dir]);
+      const nextY = snap(cy + DY[dir]);
+      const rightDir = (dir + 1) % 4;
+      const leftDir = (dir + 3) % 4;
+
+      // Cell ahead-right: the cell that would be on the right if we continue straight
+      const aheadRight = comp.has(key(nextX + RCX[dir], nextY + RCY[dir]));
+      // Cell ahead-left: the cell that would be on the left if we continue straight
+      const aheadLeft = comp.has(key(nextX + LCX[dir], nextY + LCY[dir]));
+
+      if (!aheadRight) {
+        // Turn right (convex corner)
+        vertices.push({ x: nextX, y: nextY, turn: "right" });
+        cx = nextX; cy = nextY;
+        dir = rightDir;
+      } else if (!aheadLeft) {
+        // Go straight
+        vertices.push({ x: nextX, y: nextY, turn: "straight" });
+        cx = nextX; cy = nextY;
+      } else {
+        // Turn left (concave corner)
+        vertices.push({ x: nextX, y: nextY, turn: "left" });
+        cx = nextX; cy = nextY;
+        dir = leftDir;
+      }
+    } while (key(cx, cy) !== startKey || dir !== 0);
+
+    // Remove "straight" vertices — they carry no turn info and just fragment edges
+    return vertices.filter(v => v.turn !== "straight");
+  }
+
+  // --- Step 3: Find holes via exterior flood fill ---
+  function findHoles(comp) {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const k of comp) {
+      const [x, y] = unkey(k);
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+    }
+    // Expand bounding box by 1
+    minX--; minY--; maxX++; maxY++;
+
+    // Flood fill exterior from top-left corner
+    const exterior = new Set();
+    const stack = [key(minX, minY)];
+    while (stack.length) {
+      const cur = stack.pop();
+      if (exterior.has(cur)) continue;
+      const [x, y] = unkey(cur);
+      if (x < minX || x > maxX || y < minY || y > maxY) continue;
+      if (comp.has(cur)) continue;
+      exterior.add(cur);
+      for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const nk = key(x + dx, y + dy);
+        if (!exterior.has(nk)) stack.push(nk);
+      }
+    }
+
+    // Interior holes = cells inside bbox that are not in comp and not exterior
+    const holePixels = new Set();
+    for (let y = minY + 1; y < maxY; y++) {
+      for (let x = minX + 1; x < maxX; x++) {
+        const k = key(x, y);
+        if (!comp.has(k) && !exterior.has(k)) holePixels.add(k);
+      }
+    }
+
+    if (holePixels.size === 0) return [];
+    // Each hole may be a separate connected region
+    return findComponents(holePixels);
+  }
+
+  // Trace a hole boundary (CCW = filled on left instead of right)
+  // Easiest: trace the hole's pixels as if they were a component (CW), then reverse
+  function traceHoleBoundary(holeComp) {
+    const verts = traceBoundary(holeComp);
+    // Reverse the vertex list to get CCW winding
+    verts.reverse();
+    // After reversal, "right" turns become "left" and vice versa
+    for (const v of verts) {
+      if (v.turn === "right") v.turn = "left";
+      else if (v.turn === "left") v.turn = "right";
+    }
+    return verts;
+  }
+
+  // --- Step 4a: Build edge vectors between consecutive vertices ---
+  function buildLoopEdges(vertices) {
+    const n = vertices.length;
+    const edges = [];
+    for (let i = 0; i < n; i++) {
+      const v0 = vertices[i];
+      const v1 = vertices[(i + 1) % n];
+      const dx = v1.x - v0.x;
+      const dy = v1.y - v0.y;
+      const len = Math.abs(dx) + Math.abs(dy); // Manhattan (always axis-aligned)
+      edges.push({ dx, dy, len });
+    }
+    return edges;
+  }
+
+  // --- Step 4b: Annotate vertices with checkerboard, diagonal, and L-corner flags ---
+  // Sets: v.checkerboard, v.diagConnected, v.fullRadius
+  // Dependencies are passed explicitly via ctx to avoid hidden closure coupling.
+  function annotateLoopVertices(vertices, edges, ctx) {
+    const { compPixels, allPixels: allPx, diagConnections: diagConns, fullLCorners: flc, ro } = ctx;
+    const n = vertices.length;
+
+    // Checkerboard: vertex touches 2 diagonally-opposite filled cells
+    for (const v of vertices) {
+      const hasNW = allPx.has(key(v.x - 1, v.y - 1));
+      const hasNE = allPx.has(key(v.x, v.y - 1));
+      const hasSE = allPx.has(key(v.x, v.y));
+      const hasSW = allPx.has(key(v.x - 1, v.y));
+      const filled = (hasNW ? 1 : 0) + (hasNE ? 1 : 0) + (hasSE ? 1 : 0) + (hasSW ? 1 : 0);
+      if (filled === 2 && hasNW === hasSE) {
+        v.checkerboard = true;
+      }
+    }
+
+    // Diagonal-connected: convex vertex at a diagonal connection point
+    if (diagConns.size > 0) {
+      for (const v of vertices) {
+        if (v.turn === "right" && diagConns.has(key(v.x, v.y))) {
+          v.diagConnected = true;
+        }
+      }
+    }
+
+    // L-corner detection: at each "right" turn vertex, check if a quadrant
+    // pixel has an L-corner (exposed corner + both opposite cardinals present).
+    // Uses traversal directions to disambiguate pinch-point vertices visited
+    // multiple times at the same coordinate.
+    if (flc && ro > 0) {
+      for (let i = 0; i < n; i++) {
+        if (vertices[i].turn !== "right") continue;
+        const vx = vertices[i].x, vy = vertices[i].y;
+        const prevEdge = edges[(i - 1 + n) % n];
+        const outEdge = edges[i];
+        const inDx = Math.sign(prevEdge.dx), inDy = Math.sign(prevEdge.dy);
+        const outDx = Math.sign(outEdge.dx), outDy = Math.sign(outEdge.dy);
+        // TL corner of pixel (vx,vy): adj=left,up absent; opp=right,down present
+        // Direction: incoming (0,-1), outgoing (1,0)
+        if (inDx === 0 && inDy === -1 && outDx === 1 && outDy === 0
+            && compPixels.has(key(vx, vy)) && !allPx.has(key(vx - 1, vy)) && !allPx.has(key(vx, vy - 1))
+            && allPx.has(key(vx + 1, vy)) && allPx.has(key(vx, vy + 1))) {
+          vertices[i].fullRadius = "TL"; continue;
+        }
+        // TR corner of pixel (vx-1,vy): adj=right,up absent; opp=left,down present
+        // Direction: incoming (1,0), outgoing (0,1)
+        if (inDx === 1 && inDy === 0 && outDx === 0 && outDy === 1
+            && compPixels.has(key(vx - 1, vy)) && !allPx.has(key(vx, vy)) && !allPx.has(key(vx - 1, vy - 1))
+            && allPx.has(key(vx - 2, vy)) && allPx.has(key(vx - 1, vy + 1))) {
+          vertices[i].fullRadius = "TR"; continue;
+        }
+        // BL corner of pixel (vx,vy-1): adj=left,down absent; opp=right,up present
+        // Direction: incoming (-1,0), outgoing (0,-1)
+        if (inDx === -1 && inDy === 0 && outDx === 0 && outDy === -1
+            && compPixels.has(key(vx, vy - 1)) && !allPx.has(key(vx - 1, vy - 1)) && !allPx.has(key(vx, vy))
+            && allPx.has(key(vx + 1, vy - 1)) && allPx.has(key(vx, vy - 2))) {
+          vertices[i].fullRadius = "BL"; continue;
+        }
+        // BR corner of pixel (vx-1,vy-1): adj=right,down absent; opp=left,up present
+        // Direction: incoming (0,1), outgoing (-1,0)
+        if (inDx === 0 && inDy === 1 && outDx === -1 && outDy === 0
+            && compPixels.has(key(vx - 1, vy - 1)) && !allPx.has(key(vx, vy - 1)) && !allPx.has(key(vx - 1, vy))
+            && allPx.has(key(vx - 2, vy - 1)) && allPx.has(key(vx - 1, vy - 2))) {
+          vertices[i].fullRadius = "BR"; continue;
+        }
+      }
+    }
+  }
+
+  // --- Step 4c: Resolve per-vertex corner plans ---
+  // Precomputes the rendering policy for each vertex: radius, mode name,
+  // and (for full-radius L-corners) shorten flags for adjacent fillets.
+  // This replaces the former `radiusAt()` closure that was called lazily
+  // during serialization, mixing policy decisions into the emit loop.
+  function resolveCornerPlans(vertices, edges, ctx) {
+    const { compPixels, allPixels: allPx, fullLCorners: flc, ro, ri, skipCheckerLCorners: skipCLC } = ctx;
+    const n = vertices.length;
+    const plans = new Array(n);
+
+    for (let i = 0; i < n; i++) {
+      const v = vertices[i];
+      const hasFR = flc && v.fullRadius;
+
+      // --- Checkerboard suppression ---
+      if (v.checkerboard && !hasFR) {
+        if (flc) {
+          const vx = v.x, vy = v.y;
+          const hasNE = allPx.has(key(vx, vy - 1));
+          const hasSW = allPx.has(key(vx - 1, vy));
+          if (hasNE && hasSW) {
+            const neInComp = compPixels.has(key(vx, vy - 1));
+            const swInComp = compPixels.has(key(vx - 1, vy));
+            if (neInComp && swInComp) {
+              if (isLCornerPixel(vx, vy - 1, "BL", allPx) || isLCornerPixel(vx - 1, vy, "TR", allPx)) {
+                const r = v.turn === "right" ? ro : v.turn === "left" ? ri : 0;
+                if (r > 0) { plans[i] = { radius: r, mode: "checkerboardBypass" }; continue; }
+              }
+            }
+            if (v.turn === "right") {
+              if (neInComp && !swInComp && isLCornerPixel(vx - 1, vy, "TR", allPx)) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
+              if (swInComp && !neInComp && isLCornerPixel(vx, vy - 1, "BL", allPx)) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
+            }
+          } else {
+            const hasNW = allPx.has(key(vx - 1, vy - 1));
+            const hasSE = allPx.has(key(vx, vy));
+            if (hasNW && hasSE) {
+              const nwInComp = compPixels.has(key(vx - 1, vy - 1));
+              const seInComp = compPixels.has(key(vx, vy));
+              if (nwInComp && seInComp) {
+                if (isLCornerPixel(vx - 1, vy - 1, "BR", allPx) || isLCornerPixel(vx, vy, "TL", allPx)) {
+                  const r = v.turn === "right" ? ro : v.turn === "left" ? ri : 0;
+                  if (r > 0) { plans[i] = { radius: r, mode: "checkerboardBypass" }; continue; }
+                }
+              }
+              if (v.turn === "right") {
+                if (nwInComp && !seInComp && isLCornerPixel(vx, vy, "TL", allPx)) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
+                if (seInComp && !nwInComp && isLCornerPixel(vx - 1, vy - 1, "BR", allPx)) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
+              }
+            }
+          }
+        }
+        plans[i] = { radius: 0, mode: "sharp" };
+        continue;
+      }
+
+      // --- Diagonal-connected suppression ---
+      if (v.diagConnected && !hasFR) {
+        plans[i] = { radius: 0, mode: "diagSuppressed" };
+        continue;
+      }
+
+      // --- Normal corners ---
+      if (v.turn === "right") {
+        if (flc && v.fullRadius) {
+          // Full-radius L-corner: r=1, precompute shorten flags
+          const nextI = (i + 1) % n;
+          const prevI = (i - 1 + n) % n;
+          const shortenEnd = vertices[nextI].turn === "left" && edges[i].len <= 1;
+          const shortenStart = vertices[prevI].turn === "left" && edges[(i - 1 + n) % n].len <= 1;
+          plans[i] = { radius: 1, mode: "fullLCornerArc", shortenStart, shortenEnd };
+        } else {
+          plans[i] = { radius: ro, mode: "outerArc" };
+        }
+        continue;
+      }
+
+      if (v.turn === "left") {
+        plans[i] = { radius: ri, mode: "innerFillet" };
+        continue;
+      }
+
+      plans[i] = { radius: 0, mode: "sharp" };
+    }
+
+    return plans;
+  }
+
+  // --- Step 4d: Geometry helpers for tangent-continuous fillets ---
+
+  // Find where an axis-aligned line intersects a unit circle centered at (cx, cy).
+  // isVerticalLine=true: line is x=lineCoord; false: line is y=lineCoord.
+  // sign picks which of the two intersection points to return.
+  // Returns { px, py, tx, ty } — point and tangent direction on the arc.
+  function arcLineIntersect(cx, cy, isVerticalLine, lineCoord, sign) {
+    if (isVerticalLine) {
+      const dx = lineCoord - cx;
+      const dy = sign * Math.sqrt(Math.max(0, 1 - dx * dx));
+      const len = Math.hypot(dx, dy);
+      return { px: lineCoord, py: cy + dy, tx: dy / len, ty: -dx / len };
+    } else {
+      const dy = lineCoord - cy;
+      const dx = sign * Math.sqrt(Math.max(0, 1 - dy * dy));
+      const len = Math.hypot(dx, dy);
+      return { px: cx + dx, py: lineCoord, tx: dy / len, ty: -dx / len };
+    }
+  }
+
+  // Compute the Q bezier control point from two tangent endpoints (eA, eB).
+  // Each has { px, py, tx, ty }. Returns { cpx, cpy }.
+  function filletControlPoint(eA, eB) {
+    const det = eA.tx * (-eB.ty) - (-eB.tx) * eA.ty;
+    if (Math.abs(det) < 1e-10) {
+      return { cpx: (eA.px + eB.px) / 2, cpy: (eA.py + eB.py) / 2 };
+    }
+    const alpha = ((eB.px - eA.px) * (-eB.ty) - (-eB.tx) * (eB.py - eA.py)) / det;
+    return { cpx: eA.px + alpha * eA.tx, cpy: eA.py + alpha * eA.ty };
+  }
+
+  // Compute where a fillet line from a concave vertex meets an L-corner's r=1 arc.
+  // lcVertex: the L-corner vertex; vx,vy: concave vertex position;
+  // edgeDx,edgeDy: direction of the edge between concave and LC vertices;
+  // ri: inner fillet radius. Returns { px, py, tx, ty }.
+  function lcArcFilletPoint(lcVertex, vx, vy, edgeDx, edgeDy, ri) {
+    const { pdx, pdy, odx: lodx, ody: lody } = LC_DIRS[lcVertex.fullRadius];
+    const arcCx = lcVertex.x + lodx - pdx, arcCy = lcVertex.y + lody - pdy;
+    const edgeVertical = edgeDy !== 0;
+    const lineCoord = edgeVertical ? (vy - edgeDy * ri) : (vx - edgeDx * ri);
+    const sign = edgeVertical ? Math.sign(vx - arcCx) : Math.sign(vy - arcCy);
+    return arcLineIntersect(arcCx, arcCy, !edgeVertical, lineCoord, sign);
+  }
+
+  // --- Step 4e: Serialize SVG path from pre-annotated vertices + resolved plans ---
+  function serializeLoopPath(vertices, edges, plans, ro, ri, isHole) {
+    if (vertices.length === 0) return "";
+    const p = [];
+
+    const n = vertices.length;
+
+    // Find the starting position: offset from vertex 0 by the radius
+    // The edge from vertex (n-1) to vertex 0 is the "incoming" edge to vertex 0.
+    // We start the path at the point on that edge, radius distance before vertex 0.
+    const r0 = plans[0].radius;
+    const lastEdge = edges[n - 1];
+    // Direction of last edge (incoming to vertex 0)
+    let prevDx = Math.sign(lastEdge.dx);
+    let prevDy = Math.sign(lastEdge.dy);
+    const startX = vertices[0].x - prevDx * r0;
+    const startY = vertices[0].y - prevDy * r0;
+
+    p.push(`M${fmt(startX)},${fmt(startY)}`);
+
+    // Arc sweep for rOuter convex corners: always 1 (CW in screen coords).
+    // For outer boundaries (CW), this curves inward toward the filled region.
+    // For hole boundaries (CCW), this also curves toward the filled region
+    // (which is on the outside of the hole). Using sweep=0 for holes would
+    // make the arc curve toward the hole interior — the wrong direction.
+    const sweep = 1;
+
+    for (let i = 0; i < n; i++) {
+      const r = plans[i].radius;
+      const edge = edges[i]; // outgoing edge from vertex i
+      const rNext = plans[(i + 1) % n].radius;
+
+      // Direction of outgoing edge
+      const odx = Math.sign(edge.dx);
+      const ody = Math.sign(edge.dy);
+
+      if (vertices[i].turn === "right" && r > 0) {
+        if (plans[i].mode === "fullLCornerArc") {
+          // Full-radius L-corner: arc may be shortened on either/both sides
+          const { pdx, pdy, odx: lodx, ody: lody } = LC_DIRS[vertices[i].fullRadius];
+          const arcCx = vertices[i].x + lodx - pdx, arcCy = vertices[i].y + lody - pdy;
+
+          const { shortenStart, shortenEnd } = plans[i];
+          const nextI = (i + 1) % n;
+          const prevI_lc = (i - 1 + n) % n;
+
+          // Compute start point (may be shortened by adjacent concave fillet)
+          let startX, startY;
+          if (shortenStart) {
+            const pv = vertices[prevI_lc];
+            const edgeH = prevDx !== 0;
+            const line = edgeH ? (pv.x + prevDx * ri) : (pv.y + prevDy * ri);
+            const sign = edgeH ? Math.sign(pv.y - arcCy) : Math.sign(pv.x - arcCx);
+            const pt = arcLineIntersect(arcCx, arcCy, edgeH, line, sign);
+            startX = pt.px; startY = pt.py;
+          }
+
+          // Compute end point (may be shortened by adjacent concave fillet)
+          let tgtX, tgtY;
+          if (shortenEnd) {
+            const nv = vertices[nextI];
+            const edgeV = ody !== 0;
+            const line = edgeV ? (nv.y - ody * ri) : (nv.x - odx * ri);
+            const sign = edgeV ? Math.sign(nv.x - arcCx) : Math.sign(nv.y - arcCy);
+            const pt = arcLineIntersect(arcCx, arcCy, !edgeV, line, sign);
+            tgtX = pt.px; tgtY = pt.py;
+          } else {
+            tgtX = vertices[i].x + lodx * r;
+            tgtY = vertices[i].y + lody * r;
+          }
+          p.push(`A1,1,0,0,${sweep},${fmt(tgtX)},${fmt(tgtY)}`);
+        } else {
+          // Standard convex corner arc
+          // Current pos: vertex - prevDir * r. Target: vertex + outDir * r.
+          // Displacement = outDir*r + prevDir*r
+          const adx = fmt(odx * r + prevDx * r);
+          const ady = fmt(ody * r + prevDy * r);
+          p.push(`a${fmt(r)},${fmt(r)},0,0,${sweep},${adx},${ady}`);
+        }
+      } else if (vertices[i].turn === "left" && r > 0) {
+        // Concave corner: quadratic Bézier fillet
+        const prevI = (i - 1 + n) % n;
+        const prevFR = plans[prevI].mode === "fullLCornerArc" && plans[prevI].shortenEnd;
+        const nextI = (i + 1) % n;
+        const nextFR = plans[nextI].mode === "fullLCornerArc" && plans[nextI].shortenStart;
+        if (prevFR && nextFR && ri > 0) {
+          // Both adjacent vertices have L-corners: fillet connects two r=1 arcs
+          const vx = vertices[i].x, vy = vertices[i].y;
+          const eA = lcArcFilletPoint(vertices[prevI], vx, vy, prevDx, prevDy, ri);
+          const eB = lcArcFilletPoint(vertices[nextI], vx, vy, -odx, -ody, ri);
+          const { cpx, cpy } = filletControlPoint(eA, eB);
+          p.push(`Q${fmt(cpx)},${fmt(cpy)},${fmt(eB.px)},${fmt(eB.py)}`);
+        } else if (prevFR && ri > 0) {
+          // Previous vertex has L-corner: fillet starts on the r=1 arc
+          const vx = vertices[i].x, vy = vertices[i].y;
+          const eA = lcArcFilletPoint(vertices[prevI], vx, vy, prevDx, prevDy, ri);
+          const eB = { px: vx + odx * ri, py: vy + ody * ri, tx: -odx, ty: -ody };
+          const { cpx, cpy } = filletControlPoint(eA, eB);
+          p.push(`Q${fmt(cpx)},${fmt(cpy)},${fmt(eB.px)},${fmt(eB.py)}`);
+        } else if (nextFR && ri > 0) {
+          // Next vertex has L-corner: fillet ends on the r=1 arc
+          const vx = vertices[i].x, vy = vertices[i].y;
+          const eA = { px: vx - prevDx * ri, py: vy - prevDy * ri, tx: prevDx, ty: prevDy };
+          const eB = lcArcFilletPoint(vertices[nextI], vx, vy, -odx, -ody, ri);
+          const { cpx, cpy } = filletControlPoint(eA, eB);
+          p.push(`Q${fmt(cpx)},${fmt(cpy)},${fmt(eB.px)},${fmt(eB.py)}`);
+        } else {
+          // Standard fillet
+          const cpx = prevDx * r;
+          const cpy = prevDy * r;
+          const endx = prevDx * r + odx * r;
+          const endy = prevDy * r + ody * r;
+          p.push(`q${fmt(cpx)},${fmt(cpy)},${fmt(endx)},${fmt(endy)}`);
+        }
+      }
+      // else: straight through — no corner command needed
+
+      // Emit the edge segment (shortened by radii at both ends)
+      const edgeLen = edge.len - r - rNext;
+      if (edgeLen > 0.001) {
+        if (ody === 0) p.push(`h${fmt(odx * edgeLen)}`);
+        else p.push(`v${fmt(ody * edgeLen)}`);
+      }
+
+      // Update incoming direction for next vertex
+      prevDx = odx;
+      prevDy = ody;
+    }
+
+    p.push("z");
+    return p.join("");
+  }
+
+  // L-corner direction mappings: per corner type, the "incoming" and
+  // "outgoing" directions (from the pixel's own CW boundary perspective).
+  //   TL: in=(0,-1) out=(1,0)   TR: in=(1,0) out=(0,1)
+  //   BL: in=(-1,0) out=(0,-1)  BR: in=(0,1) out=(-1,0)
+  // Used by annotateLoopVertices, lcArcFilletPoint, and serializeLoopPath.
+  const LC_DIRS = {
+    TL: { pdx: 0, pdy: -1, odx: 1, ody: 0 },
+    TR: { pdx: 1, pdy: 0, odx: 0, ody: 1 },
+    BL: { pdx: -1, pdy: 0, odx: 0, ody: -1 },
+    BR: { pdx: 0, pdy: 1, odx: -1, ody: 0 },
+  };
+
+
+  // --- Step 5: Check if outer boundary already handles a hole via winding ---
+  // The outer boundary can enter holes via "pinch points" when the trace
+  // approaches from certain directions, creating local CCW sub-loops.
+  // At these holes the outer boundary already produces winding=0, so adding
+  // a separate hole subpath would double-subtract (winding=-1 = incorrectly filled).
+  // We only emit hole subpaths for holes the outer boundary fully encloses (winding≠0).
+  function windingFromVertices(verts, px, py) {
+    let winding = 0;
+    const n = verts.length;
+    for (let i = 0; i < n; i++) {
+      const v0 = verts[i];
+      const v1 = verts[(i + 1) % n];
+      // Only vertical edges can cross a horizontal ray going right
+      if (v0.x === v1.x && v0.x > px) {
+        const minY = Math.min(v0.y, v1.y);
+        const maxY = Math.max(v0.y, v1.y);
+        if (py >= minY && py < maxY) {
+          winding += (v1.y > v0.y) ? 1 : -1;
+        }
+      }
+    }
+    return winding;
+  }
+
+  // --- Step 6: Checkerboard notch subpaths ---
+  // At a checkerboard vertex (2 filled cells on one diagonal, 2 empty on the
+  // other), per-pixel mode creates rOuter arcs on the filled pixels' exposed
+  // convex corners — no rInner fillets apply since the filled pixels have no
+  // shared cardinal neighbors at that vertex.
+  //
+  // Contour mode keeps holes as separate subpaths (no stitching). At checker-
+  // board vertices on hole boundaries:
+  //  (a) Suppress rInner — the vertex should be a sharp corner, matching
+  //      per-pixel mode where no inner fillet exists.
+  //  (b) Emit separate CCW arc-notch subpaths that carve out the rOuter gap
+  //      matching the per-pixel convex arcs of the two filled pixels.
+
+  // Check if a pixel has an L-corner at a specific corner type
+  function isLCornerPixel(px, py, corner, allPx) {
+    if (!allPx.has(key(px, py))) return false;
+    const hasL = allPx.has(key(px - 1, py)), hasR = allPx.has(key(px + 1, py));
+    const hasU = allPx.has(key(px, py - 1)), hasD = allPx.has(key(px, py + 1));
+    if (corner === "TL") return !hasL && !hasU && hasR && hasD;
+    if (corner === "TR") return !hasR && !hasU && hasL && hasD;
+    if (corner === "BL") return !hasL && !hasD && hasR && hasU;
+    if (corner === "BR") return !hasR && !hasD && hasL && hasU;
+    return false;
+  }
+
+  function emitCheckerboardNotches(holeVerts, ro, emittedSet, ctx) {
+    const { allPixels: allPx, diagConnections: diagConns, fullLCorners: flc, skipCheckerLCorners: skipCLC } = ctx;
+    if (ro <= 0) return "";
+    const parts = [];
+    for (const v of holeVerts) {
+      if (!v.checkerboard) continue;
+      const vk = key(v.x, v.y);
+      if (emittedSet.has(vk)) continue;
+      // Skip checkerboard notches at diagonal connection vertices —
+      // diagonal fillets handle the fill there instead.
+      if (diagConns.has(vk)) continue;
+
+      emittedSet.add(vk);
+
+      const vxf = fmt(v.x), vyf = fmt(v.y);
+      const hasNW = allPx.has(key(v.x - 1, v.y - 1));
+      const hasSE = allPx.has(key(v.x, v.y));
+
+      if (hasNW && hasSE) {
+        // NW-SE diagonal filled: CCW notches carving into NW and SE pixels
+        const nwLC = flc && !skipCLC && isLCornerPixel(v.x - 1, v.y - 1, "BR", allPx);
+        const seLC = flc && !skipCLC && isLCornerPixel(v.x, v.y, "TL", allPx);
+        const r1 = nwLC ? 1 : ro;
+        const r2 = seLC ? 1 : ro;
+        // When either diagonal pixel has an L-corner, suppress BOTH notch halves.
+        // The r=1 arc from the main path covers the L-corner pixel's area, and at
+        // same-component vertices the non-FR visit uses r=ro. At different-component
+        // vertices the r=1 arc's sweep covers both sides sufficiently.
+        if (!nwLC && !seLC) {
+          parts.push(`M${vxf},${vyf}L${vxf},${fmt(v.y - r1)}a${fmt(r1)},${fmt(r1)},0,0,1,${fmt(-r1)},${fmt(r1)}Z`);
+          parts.push(`M${vxf},${vyf}L${vxf},${fmt(v.y + r2)}a${fmt(r2)},${fmt(r2)},0,0,1,${fmt(r2)},${fmt(-r2)}Z`);
+        }
+      } else {
+        // NE-SW diagonal filled: CCW notches carving into NE and SW pixels
+        const hasNE = allPx.has(key(v.x, v.y - 1));
+        const neLC = flc && !skipCLC && isLCornerPixel(v.x, v.y - 1, "BL", allPx);
+        const swLC = flc && !skipCLC && isLCornerPixel(v.x - 1, v.y, "TR", allPx);
+        const r1 = neLC ? 1 : ro;
+        const r2 = swLC ? 1 : ro;
+        if (!neLC && !swLC) {
+          parts.push(`M${vxf},${vyf}L${fmt(v.x + r1)},${vyf}a${fmt(r1)},${fmt(r1)},0,0,1,${fmt(-r1)},${fmt(-r1)}Z`);
+          parts.push(`M${vxf},${vyf}L${fmt(v.x - r2)},${vyf}a${fmt(r2)},${fmt(r2)},0,0,1,${fmt(r2)},${fmt(r2)}Z`);
+        }
+      }
+    }
+    return parts.join(" ");
+  }
+
+  // --- Step 7: Pre-compute diagonal connections (rendering-only bridges) ---
+  // Reuse the same scoring logic as per-pixel mode. For each pixel, check
+  // BR and BL diagonals (to avoid duplication). Store the set of connected
+  // vertices keyed by "vx,vy" along with the direction ("br" or "bl").
+  const diagConnections = new Map(); // vertexKey -> "br" | "bl"
+  if (connectDiagonals > 0) {
+    const threshold = connectDiagonals - 1;
+    const tFloor = Math.floor(threshold);
+    const frac = threshold - tFloor;
+    for (const k of allPixels) {
+      const [x, y] = unkey(k);
+      const hasL = allPixels.has(key(x - 1, y));
+      const hasR = allPixels.has(key(x + 1, y));
+      const hasU = allPixels.has(key(x, y - 1));
+      const hasD = allPixels.has(key(x, y + 1));
+      const remCurrent = (hasL ? 1 : 0) + (hasR ? 1 : 0) + (hasU ? 1 : 0) + (hasD ? 1 : 0);
+      function shouldConnect(remOther, vx, vy) {
+        const sum = remCurrent + remOther;
+        if (sum <= tFloor) return true;
+        if (frac > 0 && sum === tFloor + 1) {
+          return ((vx * 3 + vy * 7) % 4) < (frac * 4);
+        }
+        return false;
+      }
+      // BR diagonal: vertex (x+1, y+1)
+      if (!hasR && !hasD && allPixels.has(key(x + 1, y + 1))) {
+        const rem = (allPixels.has(key(x + 2, y + 1)) ? 1 : 0) + (allPixels.has(key(x + 1, y + 2)) ? 1 : 0);
+        if (shouldConnect(rem, x + 1, y + 1)) {
+          diagConnections.set(key(x + 1, y + 1), "br");
+        }
+      }
+      // BL diagonal: vertex (x, y+1)
+      if (!hasL && !hasD && allPixels.has(key(x - 1, y + 1))) {
+        const rem = (allPixels.has(key(x - 2, y + 1)) ? 1 : 0) + (allPixels.has(key(x - 1, y + 2)) ? 1 : 0);
+        if (shouldConnect(rem, x, y + 1)) {
+          diagConnections.set(key(x, y + 1), "bl");
+        }
+      }
+    }
+  }
+
+  // --- Main: assemble all components + holes ---
+  // Pipeline per loop: trace -> buildEdges -> annotate -> resolve plans -> emit
+  const components = findComponents(squares);
+  const pathParts = [];
+  const emittedNotches = new Set(); // avoid duplicate notches at shared vertices
+  const annotCtx = { compPixels: null, allPixels, diagConnections, fullLCorners, ro: rOuter, skipCheckerLCorners };
+  const planCtx = { compPixels: null, allPixels, fullLCorners, ro: rOuter, ri: rInner, skipCheckerLCorners };
+
+  for (const comp of components) {
+    annotCtx.compPixels = comp;
+    planCtx.compPixels = comp;
+    const outerVerts = traceBoundary(comp);
+    const outerEdges = buildLoopEdges(outerVerts);
+    annotateLoopVertices(outerVerts, outerEdges, annotCtx);
+    const outerPlans = resolveCornerPlans(outerVerts, outerEdges, planCtx);
+    pathParts.push(serializeLoopPath(outerVerts, outerEdges, outerPlans, rOuter, rInner, false));
+    // Emit checkerboard notches for outer boundary (includes L-corner upgrades)
+    const outerCheckerNotches = emitCheckerboardNotches(outerVerts, rOuter, emittedNotches, annotCtx);
+    if (outerCheckerNotches) pathParts.push(outerCheckerNotches);
+
+    const holes = findHoles(comp);
+
+    // Filter holes that need separate subpaths (winding check)
+    const neededHoles = holes.filter(hole => {
+      const testCell = hole.values().next().value;
+      const [tx, ty] = unkey(testCell);
+      return windingFromVertices(outerVerts, tx + 0.5, ty + 0.5) !== 0;
+    });
+
+    // Emit each hole as a separate CCW subpath
+    for (const hole of neededHoles) {
+      const holeVerts = traceHoleBoundary(hole);
+      const holeEdges = buildLoopEdges(holeVerts);
+      annotateLoopVertices(holeVerts, holeEdges, annotCtx);
+      const holePlans = resolveCornerPlans(holeVerts, holeEdges, planCtx);
+      pathParts.push(serializeLoopPath(holeVerts, holeEdges, holePlans, rOuter, rInner, true));
+      // Emit rOuter arc notches at checkerboard vertices
+      const notches = emitCheckerboardNotches(holeVerts, rOuter, emittedNotches, annotCtx);
+      if (notches) pathParts.push(notches);
+    }
+  }
+
+  // Emit diagonal fillet subpaths (two Bézier curves per connected vertex)
+  const filletParts = [];
+  if (diagConnections.size > 0 && rInner > 0) {
+    const ri = rInner;
+    const rif = fmt(ri);
+    const nrif = fmt(-ri);
+    for (const [vk, dir] of diagConnections) {
+      const [vx, vy] = unkey(vk);
+      if (dir === "br") {
+        filletParts.push(`M${fmt(vx)},${fmt(vy - ri)}q0,${rif},${rif},${rif}h${nrif}z`);
+        filletParts.push(`M${fmt(vx - ri)},${fmt(vy)}q${rif},0,${rif},${rif}v${nrif}z`);
+      } else {
+        // "bl"
+        filletParts.push(`M${fmt(vx)},${fmt(vy - ri)}q0,${rif},${nrif},${rif}h${rif}z`);
+        filletParts.push(`M${fmt(vx + ri)},${fmt(vy)}q${nrif},0,${nrif},${rif}v${nrif}z`);
+      }
+    }
+  }
+
+  const allParts = pathParts.concat(filletParts);
+  return { path: allParts.join(" "), fillets: "" };
+}
