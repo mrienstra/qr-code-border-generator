@@ -680,50 +680,43 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
       // the L-corner arc at these vertices regardless of diagonal neighbors.
       const hasFR = fullLCorners && vertices[i].fullRadius;
       if (vertices[i].checkerboard && !hasFR) {
-        // Check if both diagonal pixels are in the SAME component.
-        // When both are in the same component, the boundary visits this
-        // vertex twice — each visit represents one pixel's corner and
-        // should round independently. No notch needed.
-        const vx = vertices[i].x, vy = vertices[i].y;
-        const hasNE = allPixels.has(key(vx, vy - 1));
-        const hasSW = allPixels.has(key(vx - 1, vy));
-        let bothInComp = false;
-        if (hasNE && hasSW) {
-          bothInComp = compPixels.has(key(vx, vy - 1)) && compPixels.has(key(vx - 1, vy));
-        } else {
-          const hasNW = allPixels.has(key(vx - 1, vy - 1));
-          const hasSE = allPixels.has(key(vx, vy));
-          if (hasNW && hasSE) {
-            bothInComp = compPixels.has(key(vx - 1, vy - 1)) && compPixels.has(key(vx, vy));
-          }
-        }
-        if (bothInComp) {
-          // Same component: use normal radius, each visit rounds independently
-          const turn = vertices[i].turn;
-          if (turn === "right") return ro;
-          if (turn === "left") return ri;
-          return 0;
-        }
-        // Different components: the OTHER component's boundary handles
-        // its own pixel. When fullLCorners is active and the other pixel
-        // has an L-corner, use normal rounding (ro) instead of 0 so the
-        // current boundary's pixel still gets its corner rounded.
-        if (fullLCorners && vertices[i].turn === "right") {
+        if (fullLCorners) {
+          const vx = vertices[i].x, vy = vertices[i].y;
+          const hasNE = allPixels.has(key(vx, vy - 1));
+          const hasSW = allPixels.has(key(vx - 1, vy));
           if (hasNE && hasSW) {
-            // NE-SW diagonal
             const neInComp = compPixels.has(key(vx, vy - 1));
             const swInComp = compPixels.has(key(vx - 1, vy));
-            if (neInComp && !swInComp && isLCornerPixel(vx - 1, vy, "TR")) return ro;
-            if (swInComp && !neInComp && isLCornerPixel(vx, vy - 1, "BL")) return ro;
+            // Same component + L-corner: the OTHER visit traces r=1,
+            // so this (non-FR) visit needs r=ro to avoid a sharp corner.
+            if (neInComp && swInComp) {
+              if (isLCornerPixel(vx, vy - 1, "BL") || isLCornerPixel(vx - 1, vy, "TR")) {
+                if (vertices[i].turn === "right") return ro;
+                if (vertices[i].turn === "left") return ri;
+              }
+            }
+            // Different component + L-corner on other side: use ro so the
+            // current component's pixel still gets its corner rounded.
+            if (vertices[i].turn === "right") {
+              if (neInComp && !swInComp && isLCornerPixel(vx - 1, vy, "TR")) return ro;
+              if (swInComp && !neInComp && isLCornerPixel(vx, vy - 1, "BL")) return ro;
+            }
           } else {
-            // NW-SE diagonal
-            const hasNW2 = allPixels.has(key(vx - 1, vy - 1));
-            const hasSE2 = allPixels.has(key(vx, vy));
-            if (hasNW2 && hasSE2) {
+            const hasNW = allPixels.has(key(vx - 1, vy - 1));
+            const hasSE = allPixels.has(key(vx, vy));
+            if (hasNW && hasSE) {
               const nwInComp = compPixels.has(key(vx - 1, vy - 1));
               const seInComp = compPixels.has(key(vx, vy));
-              if (nwInComp && !seInComp && isLCornerPixel(vx, vy, "TL")) return ro;
-              if (seInComp && !nwInComp && isLCornerPixel(vx - 1, vy - 1, "BR")) return ro;
+              if (nwInComp && seInComp) {
+                if (isLCornerPixel(vx - 1, vy - 1, "BR") || isLCornerPixel(vx, vy, "TL")) {
+                  if (vertices[i].turn === "right") return ro;
+                  if (vertices[i].turn === "left") return ri;
+                }
+              }
+              if (vertices[i].turn === "right") {
+                if (nwInComp && !seInComp && isLCornerPixel(vx, vy, "TL")) return ro;
+                if (seInComp && !nwInComp && isLCornerPixel(vx - 1, vy - 1, "BR")) return ro;
+              }
             }
           }
         }
@@ -1074,7 +1067,7 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
     return false;
   }
 
-  function emitCheckerboardNotches(holeVerts, ro, emittedSet, compPixels) {
+  function emitCheckerboardNotches(holeVerts, ro, emittedSet) {
     if (ro <= 0) return "";
     const parts = [];
     for (const v of holeVerts) {
@@ -1085,25 +1078,6 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
       // diagonal fillets handle the fill there instead.
       if (diagConnections.has(vk)) continue;
 
-      // Skip notches when both diagonal pixels are in the same component.
-      // The boundary visits this vertex twice, each visit rounds independently,
-      // so no separate notch subpath is needed.
-      if (compPixels) {
-        const hasNE = allPixels.has(key(v.x, v.y - 1));
-        const hasSW = allPixels.has(key(v.x - 1, v.y));
-        let bothInComp = false;
-        if (hasNE && hasSW) {
-          bothInComp = compPixels.has(key(v.x, v.y - 1)) && compPixels.has(key(v.x - 1, v.y));
-        } else {
-          const hasNW2 = allPixels.has(key(v.x - 1, v.y - 1));
-          const hasSE2 = allPixels.has(key(v.x, v.y));
-          if (hasNW2 && hasSE2) {
-            bothInComp = compPixels.has(key(v.x - 1, v.y - 1)) && compPixels.has(key(v.x, v.y));
-          }
-        }
-        if (bothInComp) continue;
-      }
-
       emittedSet.add(vk);
 
       const vxf = fmt(v.x), vyf = fmt(v.y);
@@ -1112,21 +1086,16 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
 
       if (hasNW && hasSE) {
         // NW-SE diagonal filled: CCW notches carving into NW and SE pixels
-        // When fullLCorners is on and skipCheckerLCorners is off, use r=1 if the pixel has an L-corner
         const nwLC = fullLCorners && !skipCheckerLCorners && isLCornerPixel(v.x - 1, v.y - 1, "BR");
         const seLC = fullLCorners && !skipCheckerLCorners && isLCornerPixel(v.x, v.y, "TL");
         const r1 = nwLC ? 1 : ro;
         const r2 = seLC ? 1 : ro;
-        // When either diagonal pixel has an L-corner, suppress BOTH notch halves:
-        // - The non-L-corner side's boundary now uses ro (not 0), so its corner is
-        //   rounded — the notch would double-fill the corner area.
-        // - The L-corner side's area is already covered by the main body boundary
-        //   (which includes the L-corner arc) — the notch extends beyond what
-        //   per-pixel mode covers into the gap between the arc and the vertex.
+        // When either diagonal pixel has an L-corner, suppress BOTH notch halves.
+        // The r=1 arc from the main path covers the L-corner pixel's area, and at
+        // same-component vertices the non-FR visit uses r=ro. At different-component
+        // vertices the r=1 arc's sweep covers both sides sufficiently.
         if (!nwLC && !seLC) {
-          // Notch 1 (upper-left, carves BR of NW pixel):
           parts.push(`M${vxf},${vyf}L${vxf},${fmt(v.y - r1)}a${fmt(r1)},${fmt(r1)},0,0,1,${fmt(-r1)},${fmt(r1)}Z`);
-          // Notch 2 (lower-right, carves TL of SE pixel):
           parts.push(`M${vxf},${vyf}L${vxf},${fmt(v.y + r2)}a${fmt(r2)},${fmt(r2)},0,0,1,${fmt(r2)},${fmt(-r2)}Z`);
         }
       } else {
@@ -1136,11 +1105,8 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
         const swLC = fullLCorners && !skipCheckerLCorners && isLCornerPixel(v.x - 1, v.y, "TR");
         const r1 = neLC ? 1 : ro;
         const r2 = swLC ? 1 : ro;
-        // Same logic: suppress both halves when either pixel has L-corner
         if (!neLC && !swLC) {
-          // Notch 1 (upper-right, carves BL of NE pixel):
           parts.push(`M${vxf},${vyf}L${fmt(v.x + r1)},${vyf}a${fmt(r1)},${fmt(r1)},0,0,1,${fmt(-r1)},${fmt(-r1)}Z`);
-          // Notch 2 (lower-left, carves TR of SW pixel):
           parts.push(`M${vxf},${vyf}L${fmt(v.x - r2)},${vyf}a${fmt(r2)},${fmt(r2)},0,0,1,${fmt(r2)},${fmt(r2)}Z`);
         }
       }
@@ -1212,7 +1178,7 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
     const lcNotches = emitLCornerNotches(outerVerts, rOuter);
     if (lcNotches) pathParts.push(lcNotches);
     // Emit checkerboard notches for outer boundary (includes L-corner upgrades)
-    const outerCheckerNotches = emitCheckerboardNotches(outerVerts, rOuter, emittedNotches, comp);
+    const outerCheckerNotches = emitCheckerboardNotches(outerVerts, rOuter, emittedNotches);
     if (outerCheckerNotches) pathParts.push(outerCheckerNotches);
 
     const holes = findHoles(comp);
@@ -1231,7 +1197,7 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
       if (diagConnections.size > 0) markDiagConnectedVertices(holeVerts, diagConnections);
       pathParts.push(emitPath(holeVerts, rOuter, rInner, true, comp));
       // Emit rOuter arc notches at checkerboard vertices
-      const notches = emitCheckerboardNotches(holeVerts, rOuter, emittedNotches, comp);
+      const notches = emitCheckerboardNotches(holeVerts, rOuter, emittedNotches);
       if (notches) pathParts.push(notches);
       // Emit L-corner notches for hole boundary
       const holeLcNotches = emitLCornerNotches(holeVerts, rOuter);
