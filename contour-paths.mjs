@@ -245,8 +245,8 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
   // and (for full-radius L-corners) shorten flags for adjacent fillets.
   // This replaces the former `radiusAt()` closure that was called lazily
   // during serialization, mixing policy decisions into the emit loop.
-  function resolveCornerPlans(vertices, edges, ctx) {
-    const { compPixels, allPixels: allPx, fullLCorners: flc, ro, ri, skipCheckerLCorners: skipCLC } = ctx;
+  function resolveCornerPlans(vertices, edges, ctx, isHole) {
+    const { compPixels, allPixels: allPx, fullLCorners: flc, ro, ri, skipCheckerLCorners: skipCLC, diagConnections: diagConns } = ctx;
     const n = vertices.length;
     const plans = new Array(n);
 
@@ -257,6 +257,7 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
       // --- Checkerboard suppression ---
       // Bridge vertices (diagonal splice points) skip this — they're always
       // at checkerboard positions but need their ri fillet preserved.
+      if ((v.x===9&&v.y===3)||(v.x===4&&v.y===7)) console.log(`[LC-DEBUG] v=(${v.x},${v.y}) turn=${v.turn} checker=${v.checkerboard} hasFR=${hasFR} fullRadius=${v.fullRadius} bridge=${v.bridge||false} compHas92=${compPixels.has(key(9,2))} compHas83=${compPixels.has(key(8,3))} compHas82=${compPixels.has(key(8,2))} compHas93=${compPixels.has(key(9,3))}`);
       if (v.checkerboard && !hasFR && !v.bridge) {
         if (flc) {
           const vx = v.x, vy = v.y;
@@ -267,7 +268,11 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
             const swInComp = compPixels.has(key(vx - 1, vy));
             if (neInComp && swInComp) {
               if (isLCornerPixel(vx, vy - 1, "BL", allPx) || isLCornerPixel(vx - 1, vy, "TR", allPx)) {
-                const r = v.turn === "right" ? ro : v.turn === "left" ? ri : 0;
+                // On hole loops without a diagonal connection, suppress left-turn
+                // ri: the fillet would bridge across the gap per-pixel keeps open.
+                // When a diagonal IS connected (diagConns), preserve ri for the bridge.
+                const suppressHoleRi = isHole && !(diagConns && diagConns.has(key(vx, vy)));
+                const r = v.turn === "right" ? ro : (v.turn === "left" && !suppressHoleRi) ? ri : 0;
                 if (r > 0) { plans[i] = { radius: r, mode: "checkerboardBypass" }; continue; }
               }
             }
@@ -283,7 +288,8 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
               const seInComp = compPixels.has(key(vx, vy));
               if (nwInComp && seInComp) {
                 if (isLCornerPixel(vx - 1, vy - 1, "BR", allPx) || isLCornerPixel(vx, vy, "TL", allPx)) {
-                  const r = v.turn === "right" ? ro : v.turn === "left" ? ri : 0;
+                  const suppressHoleRi = isHole && !(diagConns && diagConns.has(key(vx, vy)));
+                  const r = v.turn === "right" ? ro : (v.turn === "left" && !suppressHoleRi) ? ri : 0;
                   if (r > 0) { plans[i] = { radius: r, mode: "checkerboardBypass" }; continue; }
                 }
               }
@@ -307,8 +313,10 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
           const shortenEnd = vertices[nextI].turn === "left" && edges[i].len <= 1;
           const shortenStart = vertices[prevI].turn === "left" && edges[(i - 1 + n) % n].len <= 1;
           plans[i] = { radius: 1, mode: "fullLCornerArc", shortenStart, shortenEnd };
+          if ((v.x===9&&v.y===3)||(v.x===4&&v.y===7)) console.log(`[LC-DEBUG] v=(${v.x},${v.y}) fullRadius=${v.fullRadius} checker=${v.checkerboard} plan=fullLCornerArc shortenStart=${shortenStart} shortenEnd=${shortenEnd}`);
         } else {
           plans[i] = { radius: ro, mode: "outerArc" };
+          if ((v.x===9&&v.y===3)||(v.x===4&&v.y===7)) console.log(`[LC-DEBUG] v=(${v.x},${v.y}) fullRadius=${v.fullRadius} checker=${v.checkerboard} plan=outerArc r=${ro}`);
         }
         continue;
       }
@@ -563,7 +571,7 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
     return false;
   }
 
-  function emitCheckerboardNotches(holeVerts, ro, emittedSet, ctx) {
+  function emitCheckerboardNotches(holeVerts, ro, emittedSet, ctx, isHole) {
     const { allPixels: allPx, diagConnections: diagConns, fullLCorners: flc, skipCheckerLCorners: skipCLC } = ctx;
     if (ro <= 0) return "";
     const parts = [];
@@ -581,17 +589,19 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
       const hasNW = allPx.has(key(v.x - 1, v.y - 1));
       const hasSE = allPx.has(key(v.x, v.y));
 
+      // On hole loops: if we reach this vertex, the outer loop didn't visit it
+      // (emittedSet would've blocked). Emit notches even at L-corner pixels —
+      // the outer path has no arc coverage here, so notches create the gap.
+      // On outer loops: suppress when L-corner pixels present (original logic) —
+      // the main path's arc already provides the needed rounding.
+
       if (hasNW && hasSE) {
         // NW-SE diagonal filled: CCW notches carving into NW and SE pixels
         const nwLC = flc && isLCornerPixel(v.x - 1, v.y - 1, "BR", allPx);
         const seLC = flc && isLCornerPixel(v.x, v.y, "TL", allPx);
         const r1 = nwLC ? 1 : ro;
         const r2 = seLC ? 1 : ro;
-        // When either diagonal pixel has an L-corner, suppress BOTH notch halves.
-        // The r=1 arc from the main path covers the L-corner pixel's area, and at
-        // same-component vertices the non-FR visit uses r=ro. At different-component
-        // vertices the r=1 arc's sweep covers both sides sufficiently.
-        if (!nwLC && !seLC) {
+        if (isHole || (!nwLC && !seLC)) {
           parts.push(`M${vxf},${vyf}L${vxf},${fmt(v.y - r1)}a${fmt(r1)},${fmt(r1)},0,0,1,${fmt(-r1)},${fmt(r1)}Z`);
           parts.push(`M${vxf},${vyf}L${vxf},${fmt(v.y + r2)}a${fmt(r2)},${fmt(r2)},0,0,1,${fmt(r2)},${fmt(-r2)}Z`);
         }
@@ -602,7 +612,7 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
         const swLC = flc && isLCornerPixel(v.x - 1, v.y, "TR", allPx);
         const r1 = neLC ? 1 : ro;
         const r2 = swLC ? 1 : ro;
-        if (!neLC && !swLC) {
+        if (isHole || (!neLC && !swLC)) {
           parts.push(`M${vxf},${vyf}L${fmt(v.x + r1)},${vyf}a${fmt(r1)},${fmt(r1)},0,0,1,${fmt(-r1)},${fmt(-r1)}Z`);
           parts.push(`M${vxf},${vyf}L${fmt(v.x - r2)},${vyf}a${fmt(r2)},${fmt(r2)},0,0,1,${fmt(r2)},${fmt(r2)}Z`);
         }
@@ -803,17 +813,24 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
   const pathParts = [];
   const emittedNotches = new Set();
   const annotCtx = { compPixels: null, allPixels, diagConnections, fullLCorners, ro: rOuter, skipCheckerLCorners };
-  const planCtx = { compPixels: null, allPixels, fullLCorners, ro: rOuter, ri: rInner, skipCheckerLCorners };
+  const planCtx = { compPixels: null, allPixels, fullLCorners, ro: rOuter, ri: rInner, skipCheckerLCorners, diagConnections };
 
   // Process per-loop: annotate -> resolve plans -> serialize
+  let loopId = 0;
   function emitLoop(verts, superPixels, isHole) {
+    const lid = loopId++;
     annotCtx.compPixels = superPixels;
     planCtx.compPixels = superPixels;
     const edges = buildLoopEdges(verts);
     annotateLoopVertices(verts, edges, annotCtx);
-    const plans = resolveCornerPlans(verts, edges, planCtx);
+    const plans = resolveCornerPlans(verts, edges, planCtx, isHole);
+    for (let i = 0; i < verts.length; i++) {
+      if ((verts[i].x===9&&verts[i].y===3)||(verts[i].x===4&&verts[i].y===7)) {
+        console.log(`[LOOP-DIAG] loopId=${lid} isHole=${isHole} v=(${verts[i].x},${verts[i].y}) turn=${verts[i].turn} plan=${JSON.stringify(plans[i])}`);
+      }
+    }
     pathParts.push(serializeLoopPath(verts, edges, plans, rOuter, rInner, isHole));
-    const notches = emitCheckerboardNotches(verts, rOuter, emittedNotches, annotCtx);
+    const notches = emitCheckerboardNotches(verts, rOuter, emittedNotches, annotCtx, isHole);
     if (notches) pathParts.push(notches);
   }
 
