@@ -169,11 +169,11 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
     return edges;
   }
 
-  // --- Step 4b: Annotate vertices with checkerboard, diagonal, and L-corner flags ---
-  // Sets: v.checkerboard, v.diagConnected, v.fullRadius
+  // --- Step 4b: Annotate vertices with checkerboard and L-corner flags ---
+  // Sets: v.checkerboard, v.fullRadius
   // Dependencies are passed explicitly via ctx to avoid hidden closure coupling.
   function annotateLoopVertices(vertices, edges, ctx) {
-    const { compPixels, allPixels: allPx, diagConnections: diagConns, fullLCorners: flc, ro, skipCheckerLCorners: skipCLC } = ctx;
+    const { compPixels, allPixels: allPx, fullLCorners: flc, ro, skipCheckerLCorners: skipCLC } = ctx;
     const n = vertices.length;
 
     // Checkerboard: vertex touches 2 diagonally-opposite filled cells
@@ -185,15 +185,6 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
       const filled = (hasNW ? 1 : 0) + (hasNE ? 1 : 0) + (hasSE ? 1 : 0) + (hasSW ? 1 : 0);
       if (filled === 2 && hasNW === hasSE) {
         v.checkerboard = true;
-      }
-    }
-
-    // Diagonal-connected: convex vertex at a diagonal connection point
-    if (diagConns.size > 0) {
-      for (const v of vertices) {
-        if (v.turn === "right" && diagConns.has(key(v.x, v.y))) {
-          v.diagConnected = true;
-        }
       }
     }
 
@@ -263,17 +254,10 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
       const v = vertices[i];
       const hasFR = flc && v.fullRadius;
 
-      // --- Diagonal-connected suppression (must precede checkerboard & L-corner) ---
-      // Mirrors per-pixel logic where diagTL suppresses rounding (line 109)
-      // BEFORE L-corner detection runs — so fullRadius never applies at
-      // diag-connected vertices. r=0 lets the bolt-on fillet bridge correctly.
-      if (v.diagConnected) {
-        plans[i] = { radius: 0, mode: "diagSuppressed" };
-        continue;
-      }
-
       // --- Checkerboard suppression ---
-      if (v.checkerboard && !hasFR) {
+      // Bridge vertices (diagonal splice points) skip this — they're always
+      // at checkerboard positions but need their ri fillet preserved.
+      if (v.checkerboard && !hasFR && !v.bridge) {
         if (flc) {
           const vx = v.x, vy = v.y;
           const hasNE = allPx.has(key(vx, vy - 1));
@@ -668,66 +652,439 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
     }
   }
 
-  // --- Main: assemble all components + holes ---
-  // Pipeline per loop: trace -> buildEdges -> annotate -> resolve plans -> emit
+  // --- Step 8: Splice diagonal connections into contour loops ---
+  // Instead of bolting on fillet subpaths after tracing, we splice the
+  // contour loops at diagonal vertices. A bridge vertex at a diagonal
+  // is geometrically identical to a left-turn concave fillet (r=ri),
+  // so the existing serializer handles it with no changes.
+
   const components = findComponents(squares);
-  const pathParts = [];
-  const emittedNotches = new Set(); // avoid duplicate notches at shared vertices
-  const annotCtx = { compPixels: null, allPixels, diagConnections, fullLCorners, ro: rOuter, skipCheckerLCorners };
-  const planCtx = { compPixels: null, allPixels, fullLCorners, ro: rOuter, ri: rInner, skipCheckerLCorners };
 
-  for (const comp of components) {
-    annotCtx.compPixels = comp;
-    planCtx.compPixels = comp;
-    const outerVerts = traceBoundary(comp);
-    const outerEdges = buildLoopEdges(outerVerts);
-    annotateLoopVertices(outerVerts, outerEdges, annotCtx);
-    const outerPlans = resolveCornerPlans(outerVerts, outerEdges, planCtx);
-    pathParts.push(serializeLoopPath(outerVerts, outerEdges, outerPlans, rOuter, rInner, false));
-    // Emit checkerboard notches for outer boundary (includes L-corner upgrades)
-    const outerCheckerNotches = emitCheckerboardNotches(outerVerts, rOuter, emittedNotches, annotCtx);
-    if (outerCheckerNotches) pathParts.push(outerCheckerNotches);
+  // 8a. Build pixel → component index lookup
+  const pixelToComp = new Map();
+  for (let ci = 0; ci < components.length; ci++) {
+    for (const pk of components[ci]) pixelToComp.set(pk, ci);
+  }
 
-    const holes = findHoles(comp);
+  // 8b. Classify diagonals and build super-components via union-find
+  const parent = components.map((_, i) => i);
+  function ufFind(x) { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; }
+  function ufUnion(a, b) { const ra = ufFind(a), rb = ufFind(b); if (ra !== rb) parent[ra] = rb; }
 
-    // Filter holes that need separate subpaths (winding check)
-    const neededHoles = holes.filter(hole => {
-      const testCell = hole.values().next().value;
-      const [tx, ty] = unkey(testCell);
-      return windingFromVertices(outerVerts, tx + 0.5, ty + 0.5) !== 0;
-    });
-
-    // Emit each hole as a separate CCW subpath
-    for (const hole of neededHoles) {
-      const holeVerts = traceHoleBoundary(hole);
-      const holeEdges = buildLoopEdges(holeVerts);
-      annotateLoopVertices(holeVerts, holeEdges, annotCtx);
-      const holePlans = resolveCornerPlans(holeVerts, holeEdges, planCtx);
-      pathParts.push(serializeLoopPath(holeVerts, holeEdges, holePlans, rOuter, rInner, true));
-      // Emit rOuter arc notches at checkerboard vertices
-      const notches = emitCheckerboardNotches(holeVerts, rOuter, emittedNotches, annotCtx);
-      if (notches) pathParts.push(notches);
+  // Store enriched diagonal info: vertex key → { dir, pixelA, pixelB, sameComp }
+  const diagInfo = new Map();
+  for (const [vk, dir] of diagConnections) {
+    const [vx, vy] = unkey(vk);
+    let pkA, pkB;
+    if (dir === "br") {
+      pkA = key(vx - 1, vy - 1); // upper-left pixel
+      pkB = key(vx, vy);         // lower-right pixel
+    } else {
+      pkA = key(vx, vy - 1);     // upper-right pixel
+      pkB = key(vx - 1, vy);     // lower-left pixel
+    }
+    const ciA = pixelToComp.get(pkA), ciB = pixelToComp.get(pkB);
+    // sameComp: truly the same original 4-connected component (pinch point)
+    const sameComp = ciA !== undefined && ciB !== undefined && ciA === ciB;
+    diagInfo.set(vk, { dir, pkA, pkB, ciA, ciB, sameComp });
+    console.log(`[diag-classify] v=(${vx},${vy}) dir=${dir} pixA=${pkA}(ci=${ciA}) pixB=${pkB}(ci=${ciB}) sameComp=${sameComp}`);
+    if (ciA !== undefined && ciB !== undefined && ufFind(ciA) !== ufFind(ciB)) {
+      ufUnion(ciA, ciB);
     }
   }
 
-  // Emit diagonal fillet subpaths (two Bézier curves per connected vertex)
-  const filletParts = [];
-  if (diagConnections.size > 0 && rInner > 0) {
-    const ri = rInner;
-    const rif = fmt(ri);
-    const nrif = fmt(-ri);
-    for (const [vk, dir] of diagConnections) {
+  // 8c. Group components into super-components
+  const superCompMap = new Map(); // root → [component indices]
+  for (let ci = 0; ci < components.length; ci++) {
+    const root = ufFind(ci);
+    if (!superCompMap.has(root)) superCompMap.set(root, []);
+    superCompMap.get(root).push(ci);
+  }
+
+  // 8d. Splice loops at diagonal vertices
+  // For each super-component, trace all constituent boundaries, then splice.
+  function spliceLoopsAtVertex(loop1, loop2, vx, vy) {
+    // Find vertex V in each loop
+    const i1 = loop1.findIndex(v => v.x === vx && v.y === vy && v.turn === "right");
+    const i2 = loop2.findIndex(v => v.x === vx && v.y === vy && v.turn === "right");
+    if (i1 < 0 || i2 < 0) return null; // vertex not found — can't splice
+
+    // Rotate both loops so V is excluded, vertices after V come first
+    const n1 = loop1.length, n2 = loop2.length;
+    const rot1 = [];
+    for (let j = 1; j < n1; j++) rot1.push(loop1[(i1 + j) % n1]);
+    const rot2 = [];
+    for (let j = 1; j < n2; j++) rot2.push(loop2[(i2 + j) % n2]);
+
+    // Insert bridge vertices (left-turn concave fillets).
+    // bridge: true skips checkerboard suppression in resolveCornerPlans.
+    const bridge1 = { x: vx, y: vy, turn: "left", bridge: true };
+    const bridge2 = { x: vx, y: vy, turn: "left", bridge: true };
+
+    return [...rot1, bridge1, ...rot2, bridge2];
+  }
+
+  // Split a loop at a cycle-closing diagonal into outer boundary + inner hole.
+  // Returns { outer, hole } where both are vertex arrays with bridge vertices.
+  function splitLoopAtCycleClosing(loop, vx, vy) {
+    const indices = [];
+    for (let i = 0; i < loop.length; i++) {
+      if (loop[i].x === vx && loop[i].y === vy && loop[i].turn === "right") {
+        indices.push(i);
+      }
+    }
+    if (indices.length < 2) {
+      console.log(`[cycle-split FAIL] v=(${vx},${vy}) found ${indices.length} right-turn matches in loop of ${loop.length}`);
+      for (let i = 0; i < loop.length; i++) {
+        if (loop[i].x === vx && loop[i].y === vy) {
+          console.log(`  loop[${i}]: turn=${loop[i].turn} bridge=${loop[i].bridge||false}`);
+        }
+      }
+      return null;
+    }
+
+    const [i1, i2] = indices;
+    const n = loop.length;
+
+    // Extract two segments (same as selfSplice)
+    const seg1 = [];
+    for (let j = i1 + 1; j !== i2; j = (j + 1) % n) seg1.push(loop[j]);
+    const seg2 = [];
+    for (let j = i2 + 1; j !== i1; j = (j + 1) % n) seg2.push(loop[j]);
+
+    const bridge = { x: vx, y: vy, turn: "left", bridge: true };
+
+    // The larger segment is the outer boundary, the smaller is the hole.
+    // Each gets one bridge vertex at the split point.
+    let outerSeg, holeSeg;
+    if (seg1.length >= seg2.length) {
+      outerSeg = seg1;
+      holeSeg = seg2;
+    } else {
+      outerSeg = seg2;
+      holeSeg = seg1;
+    }
+
+    const outer = [...outerSeg, { ...bridge }];
+    // holeSeg follows the CW loop's forward direction, which traces CCW
+    // around the inner gap (verified by shoelace). Keep left-turn bridges
+    // so the serializer emits q-curve fillets (matching per-pixel geometry).
+    const hole = holeSeg.map(v => ({ ...v }));
+    hole.push({ x: vx, y: vy, turn: "left", bridge: true });
+
+    return { outer, hole };
+  }
+
+  function selfSpliceAtVertex(loop, vx, vy) {
+    // Find two visits to vertex V (both must be right-turns)
+    const indices = [];
+    for (let i = 0; i < loop.length; i++) {
+      if (loop[i].x === vx && loop[i].y === vy && loop[i].turn === "right") {
+        indices.push(i);
+      }
+    }
+    if (indices.length < 2) return loop; // pinch point not found — no self-splice
+
+    const [i1, i2] = indices;
+    // Split into two segments: [i1+1..i2-1] and [i2+1..i1-1] (wrapping)
+    const n = loop.length;
+    const seg1 = [];
+    for (let j = i1 + 1; j !== i2; j = (j + 1) % n) seg1.push(loop[j]);
+    const seg2 = [];
+    for (let j = i2 + 1; j !== i1; j = (j + 1) % n) seg2.push(loop[j]);
+
+    const bridge1 = { x: vx, y: vy, turn: "left", bridge: true };
+    const bridge2 = { x: vx, y: vy, turn: "left", bridge: true };
+
+    return [...seg1, bridge1, ...seg2, bridge2];
+  }
+
+  // --- Main: assemble all super-components + holes ---
+  const pathParts = [];
+  const emittedNotches = new Set();
+  const annotCtx = { compPixels: null, allPixels, diagConnections, fullLCorners, ro: rOuter, skipCheckerLCorners };
+  const planCtx = { compPixels: null, allPixels, fullLCorners, ro: rOuter, ri: rInner, skipCheckerLCorners };
+
+  // Process per-loop: annotate -> resolve plans -> serialize
+  function emitLoop(verts, superPixels, isHole) {
+    annotCtx.compPixels = superPixels;
+    planCtx.compPixels = superPixels;
+    const edges = buildLoopEdges(verts);
+    annotateLoopVertices(verts, edges, annotCtx);
+    const plans = resolveCornerPlans(verts, edges, planCtx);
+    pathParts.push(serializeLoopPath(verts, edges, plans, rOuter, rInner, isHole));
+    const notches = emitCheckerboardNotches(verts, rOuter, emittedNotches, annotCtx);
+    if (notches) pathParts.push(notches);
+  }
+
+  for (const [, compIndices] of superCompMap) {
+    // Merge pixel sets for the super-component
+    const superPixels = new Set();
+    for (const ci of compIndices) {
+      for (const pk of components[ci]) superPixels.add(pk);
+    }
+
+    // Collect diagonals within this super-component
+    const scDiags = []; // { vk, vx, vy, sameComp }
+    for (const [vk, info] of diagInfo) {
+      if (info.ciA === undefined || info.ciB === undefined) continue;
+      if (!compIndices.includes(info.ciA) && !compIndices.includes(info.ciB)) continue;
       const [vx, vy] = unkey(vk);
-      if (dir === "br") {
-        filletParts.push(`M${fmt(vx)},${fmt(vy - ri)}q0,${rif},${rif},${rif}h${nrif}z`);
-        filletParts.push(`M${fmt(vx - ri)},${fmt(vy)}q${rif},0,${rif},${rif}v${nrif}z`);
-      } else {
-        // "bl"
-        filletParts.push(`M${fmt(vx)},${fmt(vy - ri)}q0,${rif},${nrif},${rif}h${rif}z`);
-        filletParts.push(`M${fmt(vx + ri)},${fmt(vy)}q${nrif},0,${nrif},${rif}v${nrif}z`);
+      scDiags.push({ vk, vx, vy, ...info });
+    }
+
+    if (scDiags.length === 0) {
+      // No diagonals — process each component independently (original path)
+      for (const ci of compIndices) {
+        const comp = components[ci];
+        const outerVerts = traceBoundary(comp);
+        emitLoop(outerVerts, comp, false);
+
+        const holes = findHoles(comp);
+        const neededHoles = holes.filter(hole => {
+          const testCell = hole.values().next().value;
+          const [tx, ty] = unkey(testCell);
+          return windingFromVertices(outerVerts, tx + 0.5, ty + 0.5) !== 0;
+        });
+        for (const hole of neededHoles) {
+          emitLoop(traceHoleBoundary(hole), comp, true);
+        }
+      }
+    } else {
+      // Trace outer boundaries for all constituent components
+      const loopMap = new Map(); // compIndex → outer vertex loop
+      for (const ci of compIndices) {
+        loopMap.set(ci, traceBoundary(components[ci]));
+      }
+
+      const cycleHoles = []; // hole loops from cycle-closing and same-comp diagonals
+
+      // Phase 1: Same-component diagonals (pinch points → split into outer + hole)
+      // Must run FIRST on pristine component loops, before any merges that could
+      // redistribute vertex visits across loops.
+      // Pre-check: verify all same-comp diag vertices exist in their loops
+      for (const diag of scDiags) {
+        if (!diag.sameComp) continue;
+        const origLoop = loopMap.get(diag.ciA);
+        const rtCount = origLoop.filter(v => v.x === diag.vx && v.y === diag.vy && v.turn === "right").length;
+        if (rtCount < 2) {
+          const anyCount = origLoop.filter(v => v.x === diag.vx && v.y === diag.vy).length;
+          console.log(`[PRE-CHECK] v=(${diag.vx},${diag.vy}) ci=${diag.ciA}: ${rtCount} right-turns, ${anyCount} total in original loop of ${origLoop.length}`);
+          if (anyCount > 0) {
+            for (let i = 0; i < origLoop.length; i++) {
+              if (origLoop[i].x === diag.vx && origLoop[i].y === diag.vy) {
+                console.log(`  [${i}]: turn=${origLoop[i].turn} bridge=${origLoop[i].bridge||false}`);
+              }
+            }
+          }
+        }
+      }
+      for (const diag of scDiags) {
+        if (!diag.sameComp) continue;
+        const loop = loopMap.get(diag.ciA);
+        console.log(`[same-comp-split] v=(${diag.vx},${diag.vy}) dir=${diag.dir} ci=${diag.ciA} loopLen=${loop.length}`);
+        const split = splitLoopAtCycleClosing(loop, diag.vx, diag.vy);
+        if (split) {
+          console.log(`  split ok: outer=${split.outer.length} hole=${split.hole.length}`);
+          loopMap.set(diag.ciA, split.outer);
+          cycleHoles.push(split.hole);
+        } else {
+          // Prior split may have sent one visit to a hole loop.
+          // Search holes for 2 right-turn visits and split there.
+          let splitInHole = false;
+          for (let hi = 0; hi < cycleHoles.length; hi++) {
+            const hSplit = splitLoopAtCycleClosing(cycleHoles[hi], diag.vx, diag.vy);
+            if (hSplit) {
+              console.log(`  split in hole[${hi}]: outer=${hSplit.outer.length} hole=${hSplit.hole.length}`);
+              cycleHoles[hi] = hSplit.outer;  // larger piece stays as hole
+              cycleHoles.push(hSplit.hole);    // smaller piece is also a hole
+              splitInHole = true;
+              break;
+            }
+          }
+          if (!splitInHole) {
+            // Vertex visits may be spread across two different holes.
+            // Find all holes with a right-turn at V and merge them.
+            const holeIndices = [];
+            for (let hi = 0; hi < cycleHoles.length; hi++) {
+              if (cycleHoles[hi].some(v => v.x === diag.vx && v.y === diag.vy && v.turn === "right")) {
+                holeIndices.push(hi);
+              }
+            }
+            if (holeIndices.length >= 2) {
+              // Merge first two holes at V — bridge curves fill the gap
+              const [ha, hb] = holeIndices;
+              const merged = spliceLoopsAtVertex(cycleHoles[ha], cycleHoles[hb], diag.vx, diag.vy);
+              if (merged) {
+                console.log(`  merged holes[${ha}]+[${hb}] at v: ${merged.length} vertices`);
+                cycleHoles[ha] = merged;
+                cycleHoles.splice(hb, 1); // remove the second hole
+              } else {
+                console.log(`  HOLE MERGE FAILED`);
+              }
+            } else {
+              // Search ALL loops for any vertex at these coordinates (debug)
+              const searchAll = (vx, vy) => {
+                const outer = loopMap.get(diag.ciA);
+                for (let i = 0; i < outer.length; i++) {
+                  if (outer[i].x === vx && outer[i].y === vy) {
+                    console.log(`    found in outer[${i}]: turn=${outer[i].turn} bridge=${outer[i].bridge||false}`);
+                  }
+                }
+                for (let hi = 0; hi < cycleHoles.length; hi++) {
+                  for (let i = 0; i < cycleHoles[hi].length; i++) {
+                    if (cycleHoles[hi][i].x === vx && cycleHoles[hi][i].y === vy) {
+                      console.log(`    found in hole[${hi}][${i}]: turn=${cycleHoles[hi][i].turn} bridge=${cycleHoles[hi][i].bridge||false}`);
+                    }
+                  }
+                }
+              };
+              console.log(`  SPLIT FAILED — searching all loops for v=(${diag.vx},${diag.vy}):`);
+              searchAll(diag.vx, diag.vy);
+            }
+          }
+        }
+      }
+
+      // Phase 2: Splice different-component diagonals (merges + cycle-closing)
+      // Group components by their current loop (as loops merge, track which
+      // component indices share each loop)
+      const compToLoop = new Map(); // compIndex → loop reference key
+      const loops = new Map(); // loop key → vertex array
+      let loopCounter = 0;
+      for (const ci of compIndices) {
+        const lk = loopCounter++;
+        compToLoop.set(ci, lk);
+        loops.set(lk, loopMap.get(ci));
+      }
+
+      for (const diag of scDiags) {
+        if (diag.sameComp) continue; // already handled in phase 1
+        const lk1 = compToLoop.get(diag.ciA);
+        const lk2 = compToLoop.get(diag.ciB);
+        if (lk1 === lk2) {
+          // Cycle-closing diagonal: both components already in same loop.
+          // Split into outer boundary + inner hole instead of self-splicing.
+          const loop = loops.get(lk1);
+          console.log(`[cycle-closing] v=(${diag.vx},${diag.vy}) dir=${diag.dir} loopLen=${loop.length}`);
+          const split = splitLoopAtCycleClosing(loop, diag.vx, diag.vy);
+          if (split) {
+            console.log(`  split ok: outer=${split.outer.length} hole=${split.hole.length}`);
+            loops.set(lk1, split.outer);
+            cycleHoles.push(split.hole);
+          } else {
+            // Prior split may have sent one visit to a hole loop.
+            let splitInHole = false;
+            for (let hi = 0; hi < cycleHoles.length; hi++) {
+              const hSplit = splitLoopAtCycleClosing(cycleHoles[hi], diag.vx, diag.vy);
+              if (hSplit) {
+                console.log(`  split in hole[${hi}]: outer=${hSplit.outer.length} hole=${hSplit.hole.length}`);
+                cycleHoles[hi] = hSplit.outer;
+                cycleHoles.push(hSplit.hole);
+                splitInHole = true;
+                break;
+              }
+            }
+            if (!splitInHole) {
+              // Vertex visits spread across two different holes — merge them
+              const holeIndices = [];
+              for (let hi = 0; hi < cycleHoles.length; hi++) {
+                if (cycleHoles[hi].some(v => v.x === diag.vx && v.y === diag.vy && v.turn === "right")) {
+                  holeIndices.push(hi);
+                }
+              }
+              if (holeIndices.length >= 2) {
+                const [ha, hb] = holeIndices;
+                const merged = spliceLoopsAtVertex(cycleHoles[ha], cycleHoles[hb], diag.vx, diag.vy);
+                if (merged) {
+                  console.log(`  merged holes[${ha}]+[${hb}]: ${merged.length} vertices`);
+                  cycleHoles[ha] = merged;
+                  cycleHoles.splice(hb, 1);
+                } else {
+                  console.log(`  HOLE MERGE FAILED`);
+                }
+              } else {
+                console.log(`  SPLIT FAILED (${holeIndices.length} holes have vertex)`);
+              }
+            }
+          }
+        } else {
+          // Different loops — merge
+          const loop1 = loops.get(lk1);
+          const loop2 = loops.get(lk2);
+          const merged = spliceLoopsAtVertex(loop1, loop2, diag.vx, diag.vy);
+          if (merged) {
+            loops.delete(lk2);
+            loops.set(lk1, merged);
+            // Update all components that pointed to lk2
+            for (const [ci, lk] of compToLoop) {
+              if (lk === lk2) compToLoop.set(ci, lk1);
+            }
+          } else {
+            // Merge failed — a Phase 1 same-comp split may have sent the vertex
+            // to a hole loop.  Splice the orphan component into that hole so that
+            // it appears as a filled island inside the hole.  Then mark both
+            // components as sharing the same super-component so later diagonals
+            // between them become cycle-closing (which already searches holes).
+            const in1 = loop1.some(v => v.x === diag.vx && v.y === diag.vy && v.turn === "right");
+            const in2 = loop2.some(v => v.x === diag.vx && v.y === diag.vy && v.turn === "right");
+            let merged2 = false;
+            // Determine which loop is the "orphan" (has the vertex) and which
+            // loop's vertex ended up in a hole.
+            const orphanLoop = in2 ? loop2 : in1 ? loop1 : null;
+            const orphanLk   = in2 ? lk2   : in1 ? lk1   : null;
+            const keepLk     = in2 ? lk1   : in1 ? lk2   : null;
+            if (orphanLoop) {
+              for (let hi = 0; hi < cycleHoles.length; hi++) {
+                const result = spliceLoopsAtVertex(cycleHoles[hi], orphanLoop, diag.vx, diag.vy);
+                if (result) {
+                  cycleHoles[hi] = result;
+                  loops.delete(orphanLk);
+                  // Point orphan components to the keep loop's super-component
+                  for (const [ci, lk] of compToLoop) {
+                    if (lk === orphanLk) compToLoop.set(ci, keepLk);
+                  }
+                  merged2 = true;
+                  break;
+                }
+              }
+            }
+            if (!merged2) {
+              console.log(`[merge FAIL] v=(${diag.vx},${diag.vy}) dir=${diag.dir} loop1=${loop1.length} loop2=${loop2.length}`);
+            }
+          }
+        }
+      }
+
+      // Emit all outer loops
+      for (const [, loop] of loops) {
+        emitLoop(loop, superPixels, false);
+      }
+
+      // Emit cycle-closing hole loops
+      for (const hole of cycleHoles) {
+        emitLoop(hole, superPixels, true);
+      }
+
+      // Hole detection on the merged super-component pixel set.
+      // Account for cycle holes already emitted — their winding cancels the
+      // outer loop's enclosure, so we don't need a redundant hole path.
+      const holes = findHoles(superPixels);
+      const outerLoops = [...loops.values()];
+      const neededHoles = holes.filter(hole => {
+        const testCell = hole.values().next().value;
+        const [tx, ty] = unkey(testCell);
+        const px = tx + 0.5, py = ty + 0.5;
+        let winding = 0;
+        for (const loop of outerLoops) winding += windingFromVertices(loop, px, py);
+        for (const ch of cycleHoles) winding += windingFromVertices(ch, px, py);
+        return winding !== 0;
+      });
+      for (const hole of neededHoles) {
+        emitLoop(traceHoleBoundary(hole), superPixels, true);
       }
     }
   }
 
-  return { path: pathParts.join(" "), fillets: filletParts.join(" ") };
+  return { path: pathParts.join(" "), fillets: "" };
 }
