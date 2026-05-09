@@ -18,6 +18,13 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
     ro: rOuter, ri: rInner, connectDiagonals, fullLCorners, skipCheckerLCorners,
   });
 
+  // --- Diagonal connections (derived from pixel map) ---
+  const diagConnections = new Map(); // vertexKey → "br" | "bl"
+  for (const [, info] of pixelMap) {
+    if (info.diagBridges.br) diagConnections.set(key(info.x + 1, info.y + 1), "br");
+    if (info.diagBridges.bl) diagConnections.set(key(info.x, info.y + 1), "bl");
+  }
+
   // ================================================================
   // Topology layer: findComponents, traceBoundary, findHoles
   // (Same algorithms as contour-paths.mjs, no rendering policy)
@@ -161,6 +168,53 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
   }
 
   // ================================================================
+  // Diagonal splice helpers (ported from contour-paths.mjs)
+  // ================================================================
+
+  function spliceLoopsAtVertex(loop1, loop2, vx, vy) {
+    const i1 = loop1.findIndex(v => v.x === vx && v.y === vy && v.turn === "right");
+    const i2 = loop2.findIndex(v => v.x === vx && v.y === vy && v.turn === "right");
+    if (i1 < 0 || i2 < 0) return null;
+
+    const n1 = loop1.length, n2 = loop2.length;
+    const rot1 = [];
+    for (let j = 1; j < n1; j++) rot1.push(loop1[(i1 + j) % n1]);
+    const rot2 = [];
+    for (let j = 1; j < n2; j++) rot2.push(loop2[(i2 + j) % n2]);
+
+    const bridge1 = { x: vx, y: vy, turn: "left", bridge: true };
+    const bridge2 = { x: vx, y: vy, turn: "left", bridge: true };
+    return [...rot1, bridge1, ...rot2, bridge2];
+  }
+
+  function splitLoopAtCycleClosing(loop, vx, vy) {
+    const indices = [];
+    for (let i = 0; i < loop.length; i++) {
+      if (loop[i].x === vx && loop[i].y === vy && loop[i].turn === "right") {
+        indices.push(i);
+      }
+    }
+    if (indices.length < 2) return null;
+
+    const [i1, i2] = indices;
+    const n = loop.length;
+    const seg1 = [];
+    for (let j = i1 + 1; j !== i2; j = (j + 1) % n) seg1.push(loop[j]);
+    const seg2 = [];
+    for (let j = i2 + 1; j !== i1; j = (j + 1) % n) seg2.push(loop[j]);
+
+    const bridge = { x: vx, y: vy, turn: "left", bridge: true };
+    let outerSeg, holeSeg;
+    if (seg1.length >= seg2.length) { outerSeg = seg1; holeSeg = seg2; }
+    else { outerSeg = seg2; holeSeg = seg1; }
+
+    const outer = [...outerSeg, { ...bridge }];
+    const hole = holeSeg.map(v => ({ ...v }));
+    hole.push({ x: vx, y: vy, turn: "left", bridge: true });
+    return { outer, hole };
+  }
+
+  // ================================================================
   // Planning layer: derive vertex plans from pixel map
   // ================================================================
 
@@ -170,7 +224,15 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
   //   NE = (vx, vy-1)    → its BL corner
   //   SE = (vx, vy)      → its TL corner
   //   SW = (vx-1, vy)    → its TR corner
-  function vertexPlan(vx, vy, turn) {
+  function vertexPlan(vx, vy, turn, flags = {}) {
+    // Bridge vertices (inserted by diagonal splicing) are synthetic left-turn
+    // vertices at checkerboard positions. They must bypass the normal 2-filled
+    // "sharp checkerboard" branch and instead produce an inner fillet.
+    if (flags.bridge) {
+      return rInner > 0
+        ? { radius: rInner, mode: "innerFillet" }
+        : { radius: 0, mode: "sharp" };
+    }
     const nwKey = key(vx - 1, vy - 1), neKey = key(vx, vy - 1);
     const seKey = key(vx, vy), swKey = key(vx - 1, vy);
     const nw = pixelMap.get(nwKey), ne = pixelMap.get(neKey);
@@ -237,7 +299,7 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
     const plans = new Array(n);
     for (let i = 0; i < n; i++) {
       const v = vertices[i];
-      const plan = vertexPlan(v.x, v.y, v.turn);
+      const plan = vertexPlan(v.x, v.y, v.turn, { bridge: v.bridge });
 
       // For fullLCornerArc, compute shorten flags (same logic as contour)
       if (plan.mode === "fullLCornerArc") {
@@ -409,6 +471,7 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
       if (!v.checkerboard) continue;
       const vk = key(v.x, v.y);
       if (emittedSet.has(vk)) continue;
+      if (diagConnections.has(vk)) continue; // bridge handles geometry
       emittedSet.add(vk);
 
       const vxf = fmt(v.x), vyf = fmt(v.y);
@@ -480,31 +543,220 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
   const pathParts = [];
   const emittedNotches = new Set();
 
-  for (const comp of components) {
-    // Outer boundary
-    const outerVerts = traceBoundary(comp);
-    markCheckerboard(outerVerts);
-    const outerEdges = buildLoopEdges(outerVerts);
-    const outerPlans = buildLoopPlans(outerVerts, outerEdges);
-    pathParts.push(serializeLoopPath(outerVerts, outerEdges, outerPlans, rOuter, rInner, false));
-    const notches = emitCheckerboardNotches(outerVerts, rOuter, emittedNotches);
+  // Helper: plan + serialize + emit notches for one loop
+  function emitLoop(verts, isHole) {
+    markCheckerboard(verts);
+    const edges = buildLoopEdges(verts);
+    const plans = buildLoopPlans(verts, edges);
+    pathParts.push(serializeLoopPath(verts, edges, plans, rOuter, rInner, isHole));
+    const notches = emitCheckerboardNotches(verts, rOuter, emittedNotches);
     if (notches) pathParts.push(notches);
+  }
 
-    // Holes
+  // Helper: emit a component with its holes (no diagonal splicing)
+  function emitComponent(comp) {
+    const outerVerts = traceBoundary(comp);
+    emitLoop(outerVerts, false);
     const holes = findHoles(comp);
     for (const hole of holes) {
-      // Check if outer boundary already handles this hole via winding
       const [hx, hy] = unkey([...hole][0]);
-      const w = windingFromVertices(outerVerts, hx + 0.5, hy + 0.5);
-      if (w !== 0) {
-        // Need a separate CCW subpath for this hole
-        const holeVerts = traceHoleBoundary(hole);
-        markCheckerboard(holeVerts);
-        const holeEdges = buildLoopEdges(holeVerts);
-        const holePlans = buildLoopPlans(holeVerts, holeEdges);
-        pathParts.push(serializeLoopPath(holeVerts, holeEdges, holePlans, rOuter, rInner, true));
-        const hNotches = emitCheckerboardNotches(holeVerts, rOuter, emittedNotches);
-        if (hNotches) pathParts.push(hNotches);
+      if (windingFromVertices(outerVerts, hx + 0.5, hy + 0.5) !== 0) {
+        emitLoop(traceHoleBoundary(hole), true);
+      }
+    }
+  }
+
+  if (diagConnections.size === 0) {
+    // No diagonals — simple per-component path (preserves existing behavior)
+    for (const comp of components) {
+      emitComponent(comp);
+    }
+  } else {
+    // --- Diagonal splicing ---
+
+    // Build pixel → component index lookup
+    const pixelToComp = new Map();
+    for (let ci = 0; ci < components.length; ci++) {
+      for (const pk of components[ci]) pixelToComp.set(pk, ci);
+    }
+
+    // Classify diagonals and build super-components via union-find
+    const parent = components.map((_, i) => i);
+    function ufFind(x) { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; }
+    function ufUnion(a, b) { const ra = ufFind(a), rb = ufFind(b); if (ra !== rb) parent[ra] = rb; }
+
+    const diagInfo = new Map();
+    for (const [vk, dir] of diagConnections) {
+      const [vx, vy] = unkey(vk);
+      let pkA, pkB;
+      if (dir === "br") {
+        pkA = key(vx - 1, vy - 1);
+        pkB = key(vx, vy);
+      } else {
+        pkA = key(vx, vy - 1);
+        pkB = key(vx - 1, vy);
+      }
+      const ciA = pixelToComp.get(pkA), ciB = pixelToComp.get(pkB);
+      const sameComp = ciA !== undefined && ciB !== undefined && ciA === ciB;
+      diagInfo.set(vk, { dir, pkA, pkB, ciA, ciB, sameComp });
+      if (ciA !== undefined && ciB !== undefined && ufFind(ciA) !== ufFind(ciB)) {
+        ufUnion(ciA, ciB);
+      }
+    }
+
+    // Group components into super-components
+    const superCompMap = new Map();
+    for (let ci = 0; ci < components.length; ci++) {
+      const root = ufFind(ci);
+      if (!superCompMap.has(root)) superCompMap.set(root, []);
+      superCompMap.get(root).push(ci);
+    }
+
+    for (const [, compIndices] of superCompMap) {
+      // Collect diagonals within this super-component
+      const scDiags = [];
+      for (const [vk, info] of diagInfo) {
+        if (info.ciA === undefined || info.ciB === undefined) continue;
+        if (!compIndices.includes(info.ciA) && !compIndices.includes(info.ciB)) continue;
+        const [vx, vy] = unkey(vk);
+        scDiags.push({ vk, vx, vy, ...info });
+      }
+
+      if (scDiags.length === 0) {
+        // No diagonals in this super-component — process independently
+        for (const ci of compIndices) {
+          emitComponent(components[ci]);
+        }
+      } else {
+        // Merge pixel sets for the super-component
+        const superPixels = new Set();
+        for (const ci of compIndices) {
+          for (const pk of components[ci]) superPixels.add(pk);
+        }
+
+        // Trace outer boundaries for all constituent components
+        const loopMap = new Map();
+        for (const ci of compIndices) {
+          loopMap.set(ci, traceBoundary(components[ci]));
+        }
+
+        const cycleHoles = [];
+
+        // Phase 1: Same-component diagonals (pinch points → split into outer + hole)
+        for (const diag of scDiags) {
+          if (!diag.sameComp) continue;
+          const loop = loopMap.get(diag.ciA);
+          const split = splitLoopAtCycleClosing(loop, diag.vx, diag.vy);
+          if (split) {
+            loopMap.set(diag.ciA, split.outer);
+            cycleHoles.push(split.hole);
+          } else {
+            // Prior split may have sent one visit to a hole loop
+            for (let hi = 0; hi < cycleHoles.length; hi++) {
+              const hSplit = splitLoopAtCycleClosing(cycleHoles[hi], diag.vx, diag.vy);
+              if (hSplit) {
+                cycleHoles[hi] = hSplit.outer;
+                cycleHoles.push(hSplit.hole);
+                break;
+              }
+            }
+          }
+        }
+
+        // Phase 2: Different-component diagonals (merges + cycle-closing)
+        const compToLoop = new Map();
+        const loops = new Map();
+        let loopCounter = 0;
+        for (const ci of compIndices) {
+          const lk = loopCounter++;
+          compToLoop.set(ci, lk);
+          loops.set(lk, loopMap.get(ci));
+        }
+
+        for (const diag of scDiags) {
+          if (diag.sameComp) continue;
+          const lk1 = compToLoop.get(diag.ciA);
+          const lk2 = compToLoop.get(diag.ciB);
+          if (lk1 === lk2) {
+            // Cycle-closing: both components already in same loop
+            const loop = loops.get(lk1);
+            const split = splitLoopAtCycleClosing(loop, diag.vx, diag.vy);
+            if (split) {
+              loops.set(lk1, split.outer);
+              cycleHoles.push(split.hole);
+            } else {
+              // Search hole loops
+              for (let hi = 0; hi < cycleHoles.length; hi++) {
+                const hSplit = splitLoopAtCycleClosing(cycleHoles[hi], diag.vx, diag.vy);
+                if (hSplit) {
+                  cycleHoles[hi] = hSplit.outer;
+                  cycleHoles.push(hSplit.hole);
+                  break;
+                }
+              }
+            }
+          } else {
+            // Different loops — merge
+            const loop1 = loops.get(lk1);
+            const loop2 = loops.get(lk2);
+            const merged = spliceLoopsAtVertex(loop1, loop2, diag.vx, diag.vy);
+            if (merged) {
+              loops.delete(lk2);
+              loops.set(lk1, merged);
+              for (const [ci, lk] of compToLoop) {
+                if (lk === lk2) compToLoop.set(ci, lk1);
+              }
+            } else {
+              // Orphan-into-hole fallback: a Phase 1 split may have sent the
+              // vertex to a hole loop. Splice the orphan component into that hole.
+              const in1 = loop1.some(v => v.x === diag.vx && v.y === diag.vy && v.turn === "right");
+              const in2 = loop2.some(v => v.x === diag.vx && v.y === diag.vy && v.turn === "right");
+              const orphanLoop = in2 ? loop2 : in1 ? loop1 : null;
+              const orphanLk = in2 ? lk2 : in1 ? lk1 : null;
+              const keepLk = in2 ? lk1 : in1 ? lk2 : null;
+              if (orphanLoop) {
+                for (let hi = 0; hi < cycleHoles.length; hi++) {
+                  const result = spliceLoopsAtVertex(cycleHoles[hi], orphanLoop, diag.vx, diag.vy);
+                  if (result) {
+                    cycleHoles[hi] = result;
+                    loops.delete(orphanLk);
+                    for (const [ci, lk] of compToLoop) {
+                      if (lk === orphanLk) compToLoop.set(ci, keepLk);
+                    }
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // Emit all outer loops
+        for (const [, loop] of loops) {
+          emitLoop(loop, false);
+        }
+
+        // Emit cycle-closing hole loops
+        for (const hole of cycleHoles) {
+          emitLoop(hole, true);
+        }
+
+        // Re-detect holes on the merged super-component pixel set.
+        // Filter out holes already covered by cycle-closing holes.
+        const holes = findHoles(superPixels);
+        const outerLoops = [...loops.values()];
+        const neededHoles = holes.filter(hole => {
+          const testCell = hole.values().next().value;
+          const [tx, ty] = unkey(testCell);
+          const px = tx + 0.5, py = ty + 0.5;
+          let w = 0;
+          for (const loop of outerLoops) w += windingFromVertices(loop, px, py);
+          for (const ch of cycleHoles) w += windingFromVertices(ch, px, py);
+          return w !== 0;
+        });
+        for (const hole of neededHoles) {
+          emitLoop(traceHoleBoundary(hole), true);
+        }
       }
     }
   }
