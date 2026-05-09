@@ -93,3 +93,4 @@ export function trimCornersDiagonal(squares, layout, trimDxGeDy) {
 
 export { squaresToPath, squaresToRoundedPath } from './per-pixel-paths.mjs';
 export { squaresToContourPath } from './contour-paths.mjs';
+export { squaresToCleanPath } from './clean-paths.mjs';

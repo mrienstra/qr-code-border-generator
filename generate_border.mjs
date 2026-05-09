@@ -3,7 +3,7 @@
  * ES module — usable from Node CLI or browser import.
  */
 
-import { key, unkey, FINDER_ZONE, fmt, trimEdges, flipVertical, flipHorizontal, shift, offsetToSvg, trimCornersDiagonal, squaresToPath, squaresToRoundedPath, squaresToContourPath } from "./pixel-paths.mjs";
+import { key, unkey, FINDER_ZONE, fmt, trimEdges, flipVertical, flipHorizontal, shift, offsetToSvg, trimCornersDiagonal, squaresToPath, squaresToRoundedPath, squaresToContourPath, squaresToCleanPath } from "./pixel-paths.mjs";
 import { parseQr, randomizeAlignmentPatterns, obfuscatePatterns, getAlignmentPositions } from "./qr-patterns.mjs";
 import { CIRCLE_RATIO, CIRCLE_MARGIN, CIRCLE_STROKE_WIDTH, computeLayout, pixelOverlapsStroke, generateSvg } from "./svg-output.mjs";
 
@@ -144,6 +144,7 @@ export function generate(svgText, {
   fullLCorners = false,
   skipCheckerLCorners = false,
   contourMode = false,
+  cleanPathMode = false,
   wobbleFreq = 0,
   wobbleOctaves = 3,
   wobbleScale = 0,
@@ -332,15 +333,18 @@ export function generate(svgText, {
   }
   } // end if (!noFluff)
 
-  // Build path converter (contour, rounded, or standard)
+  // Build path converter (clean-path, contour, rounded, or standard)
   const useContour = contourMode && !diagOnly && jiggle === 0;
+  const useCleanPath = cleanPathMode && !diagOnly && jiggle === 0;
   let toPath = (sq) => ({ path: squaresToPath(sq), fillets: "" });
-  if (useContour || roundedPixels > 0 || roundedInner > 0) {
+  if (useCleanPath || useContour || roundedPixels > 0 || roundedInner > 0) {
     const allPixels = new Set(qrSvg);
     for (const [, group] of allGroups)
       for (const [, squares] of group)
         for (const k of squares) allPixels.add(k);
-    if (useContour) {
+    if (useCleanPath) {
+      toPath = (sq) => squaresToCleanPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, fullLCorners, skipCheckerLCorners);
+    } else if (useContour) {
       toPath = (sq) => squaresToContourPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, fullLCorners, skipCheckerLCorners);
     } else {
       toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, diagOnly, jiggle, fullLCorners, skipCheckerLCorners);
