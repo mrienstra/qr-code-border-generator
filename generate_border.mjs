@@ -147,6 +147,7 @@ export function generate(svgText, {
   wobbleFreq = 0,
   wobbleOctaves = 3,
   wobbleScale = 0,
+  noFluff = false,
 } = {}) {
   let { squares: qr, qrSize } = parseQr(svgText);
   if (obfuscate) {
@@ -154,6 +155,11 @@ export function generate(svgText, {
   }
   const layout = computeLayout(qrSize, circleRatio, strokeWidth, borderShape, cornerRadius, snapRadius);
   layout.gap = gap;
+
+  const qrSvg = offsetToSvg(qr, layout.qrOrigin, layout.qrOrigin);
+
+  const allGroups = [];
+  if (!noFluff) {
   const effectiveFlankGap = randFluff ? 0 : flankGap;
   layout.flankInset = 2 * FINDER_ZONE - effectiveFlankGap;
   layout.flankInsetNoFinder = -effectiveFlankGap;
@@ -170,8 +176,6 @@ export function generate(svgText, {
   const repsAsymInset = Math.max(1, Math.ceil((layout.qrOrigin - margin) / step));
   const repsAsymNoInset = Math.max(1, Math.ceil((layout.qrOrigin - margin) / stepNoInset));
 
-  const qrSvg = offsetToSvg(qr, layout.qrOrigin, layout.qrOrigin);
-
   // Determine fluff source
   let fluffQr;
   if (randFluff) {
@@ -186,12 +190,12 @@ export function generate(svgText, {
     fluffQr = qr;
   }
 
-  const allGroups = [
+  allGroups.push(
     ["top", makeTopGroup(fluffQr, layout, repsSymm)],
     ["bottom", makeBottomGroup(fluffQr, layout, repsAsymInset, repsAsymNoInset)],
     ["left", makeLeftGroup(fluffQr, layout, repsSymm)],
     ["right", makeRightGroup(fluffQr, layout, repsAsymInset, repsAsymNoInset)],
-  ];
+  );
 
   // Random fluff: randomly keep ~50% of pixels using a per-position hash.
   // Each grid position gets a deterministic random value from its coordinates
@@ -326,6 +330,7 @@ export function generate(svgText, {
       }
     }
   }
+  } // end if (!noFluff)
 
   // Build path converter (contour, rounded, or standard)
   const useContour = contourMode && !diagOnly && jiggle === 0;
@@ -430,6 +435,7 @@ async function cli() {
     allowPositionals: true,
     options: {
       output: { type: "string", short: "o", default: "qr-code-generated.svg" },
+      replay: { type: "string" },
       colorful: { type: "boolean", default: false },
       "circle-ratio": { type: "string", default: String(CIRCLE_RATIO) },
       "stroke-width": { type: "string", default: String(CIRCLE_STROKE_WIDTH) },
@@ -451,8 +457,23 @@ async function cli() {
       "rand-fluff": { type: "boolean", default: false },
       "full-l-corners": { type: "boolean", default: false },
       "contour-mode": { type: "boolean", default: false },
+      "no-fluff": { type: "boolean", default: false },
     },
   });
+
+  // Replay mode: load exact inputs from a JSON fixture captured in the browser
+  if (values.replay) {
+    const fixture = JSON.parse(readFileSync(values.replay, "utf-8"));
+    const { svgText, options } = fixture;
+    const { qrSize } = parseQr(svgText);
+    const version = (qrSize - 17) / 4;
+    console.log(`Replaying fixture: QR version ${version}, ${qrSize}x${qrSize} grid`);
+    console.log(`Options: ${JSON.stringify(options)}`);
+    const result = generate(svgText, options);
+    writeFileSync(values.output, result);
+    console.log(`Wrote ${values.output}`);
+    return;
+  }
 
   const input = positionals[0] || "qr-code-original.svg";
   const svgText = readFileSync(input, "utf-8");
@@ -484,6 +505,7 @@ async function cli() {
     fullLCorners: values["full-l-corners"],
     skipCheckerLCorners: values["skip-checker-l-corners"],
     contourMode: values["contour-mode"],
+    noFluff: values["no-fluff"],
   });
 
   writeFileSync(values.output, result);
