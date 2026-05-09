@@ -173,7 +173,7 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
   // Sets: v.checkerboard, v.diagConnected, v.fullRadius
   // Dependencies are passed explicitly via ctx to avoid hidden closure coupling.
   function annotateLoopVertices(vertices, edges, ctx) {
-    const { compPixels, allPixels: allPx, diagConnections: diagConns, fullLCorners: flc, ro } = ctx;
+    const { compPixels, allPixels: allPx, diagConnections: diagConns, fullLCorners: flc, ro, skipCheckerLCorners: skipCLC } = ctx;
     const n = vertices.length;
 
     // Checkerboard: vertex touches 2 diagonally-opposite filled cells
@@ -211,30 +211,38 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
         const outDx = Math.sign(outEdge.dx), outDy = Math.sign(outEdge.dy);
         // TL corner of pixel (vx,vy): adj=left,up absent; opp=right,down present
         // Direction: incoming (0,-1), outgoing (1,0)
+        // skipCheckerLCorners: suppress if diagonal pixel (vx-1,vy-1) is filled
         if (inDx === 0 && inDy === -1 && outDx === 1 && outDy === 0
             && compPixels.has(key(vx, vy)) && !allPx.has(key(vx - 1, vy)) && !allPx.has(key(vx, vy - 1))
-            && allPx.has(key(vx + 1, vy)) && allPx.has(key(vx, vy + 1))) {
+            && allPx.has(key(vx + 1, vy)) && allPx.has(key(vx, vy + 1))
+            && !(skipCLC && allPx.has(key(vx - 1, vy - 1)))) {
           vertices[i].fullRadius = "TL"; continue;
         }
         // TR corner of pixel (vx-1,vy): adj=right,up absent; opp=left,down present
         // Direction: incoming (1,0), outgoing (0,1)
+        // skipCheckerLCorners: suppress if diagonal pixel (vx,vy-1) is filled
         if (inDx === 1 && inDy === 0 && outDx === 0 && outDy === 1
             && compPixels.has(key(vx - 1, vy)) && !allPx.has(key(vx, vy)) && !allPx.has(key(vx - 1, vy - 1))
-            && allPx.has(key(vx - 2, vy)) && allPx.has(key(vx - 1, vy + 1))) {
+            && allPx.has(key(vx - 2, vy)) && allPx.has(key(vx - 1, vy + 1))
+            && !(skipCLC && allPx.has(key(vx, vy - 1)))) {
           vertices[i].fullRadius = "TR"; continue;
         }
         // BL corner of pixel (vx,vy-1): adj=left,down absent; opp=right,up present
         // Direction: incoming (-1,0), outgoing (0,-1)
+        // skipCheckerLCorners: suppress if diagonal pixel (vx-1,vy) is filled
         if (inDx === -1 && inDy === 0 && outDx === 0 && outDy === -1
             && compPixels.has(key(vx, vy - 1)) && !allPx.has(key(vx - 1, vy - 1)) && !allPx.has(key(vx, vy))
-            && allPx.has(key(vx + 1, vy - 1)) && allPx.has(key(vx, vy - 2))) {
+            && allPx.has(key(vx + 1, vy - 1)) && allPx.has(key(vx, vy - 2))
+            && !(skipCLC && allPx.has(key(vx - 1, vy)))) {
           vertices[i].fullRadius = "BL"; continue;
         }
         // BR corner of pixel (vx-1,vy-1): adj=right,down absent; opp=left,up present
         // Direction: incoming (0,1), outgoing (-1,0)
+        // skipCheckerLCorners: suppress if diagonal pixel (vx,vy) is filled
         if (inDx === 0 && inDy === 1 && outDx === -1 && outDy === 0
             && compPixels.has(key(vx - 1, vy - 1)) && !allPx.has(key(vx, vy - 1)) && !allPx.has(key(vx - 1, vy))
-            && allPx.has(key(vx - 2, vy - 1)) && allPx.has(key(vx - 1, vy - 2))) {
+            && allPx.has(key(vx - 2, vy - 1)) && allPx.has(key(vx - 1, vy - 2))
+            && !(skipCLC && allPx.has(key(vx, vy)))) {
           vertices[i].fullRadius = "BR"; continue;
         }
       }
@@ -255,6 +263,15 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
       const v = vertices[i];
       const hasFR = flc && v.fullRadius;
 
+      // --- Diagonal-connected suppression (must precede checkerboard & L-corner) ---
+      // Mirrors per-pixel logic where diagTL suppresses rounding (line 109)
+      // BEFORE L-corner detection runs — so fullRadius never applies at
+      // diag-connected vertices. r=0 lets the bolt-on fillet bridge correctly.
+      if (v.diagConnected) {
+        plans[i] = { radius: 0, mode: "diagSuppressed" };
+        continue;
+      }
+
       // --- Checkerboard suppression ---
       if (v.checkerboard && !hasFR) {
         if (flc) {
@@ -271,8 +288,8 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
               }
             }
             if (v.turn === "right") {
-              if (neInComp && !swInComp && isLCornerPixel(vx - 1, vy, "TR", allPx)) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
-              if (swInComp && !neInComp && isLCornerPixel(vx, vy - 1, "BL", allPx)) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
+              if (neInComp && !swInComp && (isLCornerPixel(vx - 1, vy, "TR", allPx) || isLCornerPixel(vx, vy - 1, "BL", allPx))) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
+              if (swInComp && !neInComp && (isLCornerPixel(vx, vy - 1, "BL", allPx) || isLCornerPixel(vx - 1, vy, "TR", allPx))) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
             }
           } else {
             const hasNW = allPx.has(key(vx - 1, vy - 1));
@@ -287,19 +304,13 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
                 }
               }
               if (v.turn === "right") {
-                if (nwInComp && !seInComp && isLCornerPixel(vx, vy, "TL", allPx)) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
-                if (seInComp && !nwInComp && isLCornerPixel(vx - 1, vy - 1, "BR", allPx)) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
+                if (nwInComp && !seInComp && (isLCornerPixel(vx, vy, "TL", allPx) || isLCornerPixel(vx - 1, vy - 1, "BR", allPx))) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
+                if (seInComp && !nwInComp && (isLCornerPixel(vx - 1, vy - 1, "BR", allPx) || isLCornerPixel(vx, vy, "TL", allPx))) { plans[i] = { radius: ro, mode: "checkerboardBypass" }; continue; }
               }
             }
           }
         }
         plans[i] = { radius: 0, mode: "sharp" };
-        continue;
-      }
-
-      // --- Diagonal-connected suppression ---
-      if (v.diagConnected && !hasFR) {
-        plans[i] = { radius: 0, mode: "diagSuppressed" };
         continue;
       }
 
@@ -588,8 +599,8 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
 
       if (hasNW && hasSE) {
         // NW-SE diagonal filled: CCW notches carving into NW and SE pixels
-        const nwLC = flc && !skipCLC && isLCornerPixel(v.x - 1, v.y - 1, "BR", allPx);
-        const seLC = flc && !skipCLC && isLCornerPixel(v.x, v.y, "TL", allPx);
+        const nwLC = flc && isLCornerPixel(v.x - 1, v.y - 1, "BR", allPx);
+        const seLC = flc && isLCornerPixel(v.x, v.y, "TL", allPx);
         const r1 = nwLC ? 1 : ro;
         const r2 = seLC ? 1 : ro;
         // When either diagonal pixel has an L-corner, suppress BOTH notch halves.
@@ -603,8 +614,8 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
       } else {
         // NE-SW diagonal filled: CCW notches carving into NE and SW pixels
         const hasNE = allPx.has(key(v.x, v.y - 1));
-        const neLC = flc && !skipCLC && isLCornerPixel(v.x, v.y - 1, "BL", allPx);
-        const swLC = flc && !skipCLC && isLCornerPixel(v.x - 1, v.y, "TR", allPx);
+        const neLC = flc && isLCornerPixel(v.x, v.y - 1, "BL", allPx);
+        const swLC = flc && isLCornerPixel(v.x - 1, v.y, "TR", allPx);
         const r1 = neLC ? 1 : ro;
         const r2 = swLC ? 1 : ro;
         if (!neLC && !swLC) {
@@ -718,6 +729,5 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
     }
   }
 
-  const allParts = pathParts.concat(filletParts);
-  return { path: allParts.join(" "), fillets: "" };
+  return { path: pathParts.join(" "), fillets: filletParts.join(" ") };
 }
