@@ -299,7 +299,36 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
     const plans = new Array(n);
     for (let i = 0; i < n; i++) {
       const v = vertices[i];
-      const plan = vertexPlan(v.x, v.y, v.turn, { bridge: v.bridge });
+      let plan = vertexPlan(v.x, v.y, v.turn, { bridge: v.bridge });
+
+      // At checkerboard right-turn vertices, vertexPlan returns "sharp" because
+      // it sees filled=2 from the global pixelMap. Use edge directions to
+      // determine which pixel the boundary is rounding, and look up that
+      // pixel's actual corner radius from the classifier.
+      if (plan.mode === "sharp" && v.turn === "right" && v.checkerboard) {
+        const inEdge = edges[(i - 1 + n) % n];
+        const inDx = Math.sign(inEdge.dx), inDy = Math.sign(inEdge.dy);
+        // For CCW boundary at a right turn, the pixel is to the left of travel.
+        let pxKey, cornerName, lcDir;
+        if (inDx === 1) {        // incoming right → pixel at SW
+          pxKey = key(v.x - 1, v.y); cornerName = "tr"; lcDir = "TR";
+        } else if (inDy === 1) { // incoming down → pixel at NW
+          pxKey = key(v.x - 1, v.y - 1); cornerName = "br"; lcDir = "BR";
+        } else if (inDx === -1) { // incoming left → pixel at NE
+          pxKey = key(v.x, v.y - 1); cornerName = "bl"; lcDir = "BL";
+        } else {                  // incoming up → pixel at SE
+          pxKey = key(v.x, v.y); cornerName = "tl"; lcDir = "TL";
+        }
+        const pxInfo = pixelMap.get(pxKey);
+        if (pxInfo) {
+          const r = pxInfo.corners[cornerName].radius;
+          if (r === 1 && fullLCorners) {
+            plan = { radius: 1, mode: "fullLCornerArc", lcDir };
+          } else if (r > 0) {
+            plan = { radius: r, mode: "outerArc" };
+          }
+        }
+      }
 
       // For fullLCornerArc, compute shorten flags (same logic as contour)
       if (plan.mode === "fullLCornerArc") {
@@ -309,6 +338,7 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
         plan.shortenEnd = vertices[nextI].turn === "left" && edges[i].len <= 1;
       }
 
+
       plans[i] = plan;
     }
     return plans;
@@ -317,6 +347,26 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
   // ================================================================
   // Serialization layer
   // ================================================================
+
+  // At a checkerboard vertex, find which diagonal pixel has an L-corner arc
+  // with an endpoint in the given direction. Returns the lcDir or null.
+  // Used by inner fillet code to adjust endpoints to match L-corner notch arcs.
+  function checkerNotchLcDir(vx, vy, dx, dy) {
+    const hasNE = allPixels.has(key(vx, vy - 1));
+    const hasSW = allPixels.has(key(vx - 1, vy));
+    let pxKey, cornerName, lcDir;
+    if (hasNE && hasSW) {
+      // NE-SW diagonal: UP/RIGHT → NE pixel, DOWN/LEFT → SW pixel
+      if (dy < 0 || dx > 0) { pxKey = key(vx, vy - 1); cornerName = "bl"; lcDir = "BL"; }
+      else { pxKey = key(vx - 1, vy); cornerName = "tr"; lcDir = "TR"; }
+    } else {
+      // NW-SE diagonal: UP/LEFT → NW pixel, DOWN/RIGHT → SE pixel
+      if (dy < 0 || dx < 0) { pxKey = key(vx - 1, vy - 1); cornerName = "br"; lcDir = "BR"; }
+      else { pxKey = key(vx, vy); cornerName = "tl"; lcDir = "TL"; }
+    }
+    const info = pixelMap.get(pxKey);
+    return (info && info.corners[cornerName].radius === 1) ? lcDir : null;
+  }
 
   // Arc-line intersection for L-corner fillet shortening
   // isVerticalLine: true if the line is vertical (x=lineCoord), false if horizontal (y=lineCoord)
@@ -486,15 +536,20 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
         const seInfo = pixelMap.get(key(v.x, v.y));
         const r1 = nwInfo?.corners?.br?.radius ?? ro;
         const r2 = seInfo?.corners?.tl?.radius ?? ro;
-        parts.push(`M${vxf},${vyf}L${vxf},${fmt(v.y - r1)}a${fmt(r1)},${fmt(r1)},0,0,1,${fmt(-r1)},${fmt(r1)}Z`);
-        parts.push(`M${vxf},${vyf}L${vxf},${fmt(v.y + r2)}a${fmt(r2)},${fmt(r2)},0,0,1,${fmt(r2)},${fmt(-r2)}Z`);
+        // Only suppress notch when the L-corner arc is actually in a boundary path
+        if (!lcArcInBoundary.has(vk + "_BR"))
+          parts.push(`M${vxf},${vyf}L${vxf},${fmt(v.y - r1)}a${fmt(r1)},${fmt(r1)},0,0,1,${fmt(-r1)},${fmt(r1)}Z`);
+        if (!lcArcInBoundary.has(vk + "_TL"))
+          parts.push(`M${vxf},${vyf}L${vxf},${fmt(v.y + r2)}a${fmt(r2)},${fmt(r2)},0,0,1,${fmt(r2)},${fmt(-r2)}Z`);
       } else if (hasNE && hasSW) {
         const neInfo = pixelMap.get(key(v.x, v.y - 1));
         const swInfo = pixelMap.get(key(v.x - 1, v.y));
         const r1 = neInfo?.corners?.bl?.radius ?? ro;
         const r2 = swInfo?.corners?.tr?.radius ?? ro;
-        parts.push(`M${vxf},${vyf}L${fmt(v.x + r1)},${vyf}a${fmt(r1)},${fmt(r1)},0,0,1,${fmt(-r1)},${fmt(-r1)}Z`);
-        parts.push(`M${vxf},${vyf}L${fmt(v.x - r2)},${vyf}a${fmt(r2)},${fmt(r2)},0,0,1,${fmt(r2)},${fmt(r2)}Z`);
+        if (!lcArcInBoundary.has(vk + "_BL"))
+          parts.push(`M${vxf},${vyf}L${fmt(v.x + r1)},${vyf}a${fmt(r1)},${fmt(r1)},0,0,1,${fmt(-r1)},${fmt(-r1)}Z`);
+        if (!lcArcInBoundary.has(vk + "_TR"))
+          parts.push(`M${vxf},${vyf}L${fmt(v.x - r2)},${vyf}a${fmt(r2)},${fmt(r2)},0,0,1,${fmt(r2)},${fmt(r2)}Z`);
       }
     }
     return parts.join("");
@@ -542,26 +597,49 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
   const components = findComponents(squares);
   const pathParts = [];
   const emittedNotches = new Set();
+  const lcArcInBoundary = new Set(); // tracks "vx,vy_dir" for arcs in boundary paths at checkerboard vertices
+  const deferredNotchLoops = []; // vertex arrays for deferred notch emission
 
-  // Helper: plan + serialize + emit notches for one loop
-  function emitLoop(verts, isHole) {
+  // Pass 1: trace boundary, record arcs, serialize path (no notches yet)
+  function prepareLoop(verts, isHole) {
     markCheckerboard(verts);
     const edges = buildLoopEdges(verts);
     const plans = buildLoopPlans(verts, edges);
+    // Record which checkerboard vertices have arcs in this boundary
+    for (let i = 0; i < verts.length; i++) {
+      if (verts[i].checkerboard && plans[i].radius > 0 && verts[i].turn === "right") {
+        const inEdge = edges[(i - 1 + verts.length) % verts.length];
+        const inDx = Math.sign(inEdge.dx), inDy = Math.sign(inEdge.dy);
+        let dir;
+        if (inDx === 1) dir = "TR";
+        else if (inDy === 1) dir = "BR";
+        else if (inDx === -1) dir = "BL";
+        else dir = "TL";
+        lcArcInBoundary.add(key(verts[i].x, verts[i].y) + "_" + dir);
+      }
+    }
     pathParts.push(serializeLoopPath(verts, edges, plans, rOuter, rInner, isHole));
-    const notches = emitCheckerboardNotches(verts, rOuter, emittedNotches);
-    if (notches) pathParts.push(notches);
+    deferredNotchLoops.push(verts);
   }
 
-  // Helper: emit a component with its holes (no diagonal splicing)
-  function emitComponent(comp) {
+  // Pass 2: emit notches after all boundaries have been recorded
+  function emitDeferredNotches() {
+    for (const verts of deferredNotchLoops) {
+      const notches = emitCheckerboardNotches(verts, rOuter, emittedNotches);
+      if (notches) pathParts.push(notches);
+    }
+    deferredNotchLoops.length = 0;
+  }
+
+  // Helper: prepare a component with its holes (no diagonal splicing)
+  function prepareComponent(comp) {
     const outerVerts = traceBoundary(comp);
-    emitLoop(outerVerts, false);
+    prepareLoop(outerVerts, false);
     const holes = findHoles(comp);
     for (const hole of holes) {
       const [hx, hy] = unkey([...hole][0]);
       if (windingFromVertices(outerVerts, hx + 0.5, hy + 0.5) !== 0) {
-        emitLoop(traceHoleBoundary(hole), true);
+        prepareLoop(traceHoleBoundary(hole), true);
       }
     }
   }
@@ -569,8 +647,9 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
   if (diagConnections.size === 0) {
     // No diagonals — simple per-component path (preserves existing behavior)
     for (const comp of components) {
-      emitComponent(comp);
+      prepareComponent(comp);
     }
+    emitDeferredNotches();
   } else {
     // --- Diagonal splicing ---
 
@@ -625,7 +704,7 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
       if (scDiags.length === 0) {
         // No diagonals in this super-component — process independently
         for (const ci of compIndices) {
-          emitComponent(components[ci]);
+          prepareComponent(components[ci]);
         }
       } else {
         // Merge pixel sets for the super-component
@@ -733,12 +812,12 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
 
         // Emit all outer loops
         for (const [, loop] of loops) {
-          emitLoop(loop, false);
+          prepareLoop(loop, false);
         }
 
         // Emit cycle-closing hole loops
         for (const hole of cycleHoles) {
-          emitLoop(hole, true);
+          prepareLoop(hole, true);
         }
 
         // Re-detect holes on the merged super-component pixel set.
@@ -755,10 +834,11 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
           return w !== 0;
         });
         for (const hole of neededHoles) {
-          emitLoop(traceHoleBoundary(hole), true);
+          prepareLoop(traceHoleBoundary(hole), true);
         }
       }
     }
+    emitDeferredNotches();
   }
 
   return { path: pathParts.join(" "), fillets: "" };
