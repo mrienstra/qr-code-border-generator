@@ -221,114 +221,62 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
   // Planning layer: derive vertex plans from pixel map
   // ================================================================
 
-  // At grid vertex (vx, vy), determine the rendering plan based on the pixel map.
-  // The four pixels touching this vertex are:
-  //   NW = (vx-1, vy-1)  → its BR corner
-  //   NE = (vx, vy-1)    → its BL corner
-  //   SE = (vx, vy)      → its TL corner
-  //   SW = (vx-1, vy)    → its TR corner
+  // Derive the rendering plan for grid vertex (vx, vy) using vertexMap.
   function vertexPlan(vx, vy, turn, flags = {}) {
-    // Bridge vertices (inserted by diagonal splicing) are synthetic left-turn
-    // vertices at checkerboard positions. They must bypass the normal 2-filled
-    // "sharp checkerboard" branch and instead produce an inner fillet.
     if (flags.bridge) {
       return rInner > 0
         ? { radius: rInner, mode: "innerFillet" }
         : { radius: 0, mode: "sharp" };
     }
-    const nwKey = key(vx - 1, vy - 1), neKey = key(vx, vy - 1);
-    const seKey = key(vx, vy), swKey = key(vx - 1, vy);
-    const nw = pixelMap.get(nwKey), ne = pixelMap.get(neKey);
-    const se = pixelMap.get(seKey), sw = pixelMap.get(swKey);
-    const filled = (nw ? 1 : 0) + (ne ? 1 : 0) + (se ? 1 : 0) + (sw ? 1 : 0);
+
+    const v = vertexMap.get(key(vx, vy));
+    if (!v) return { radius: 0, mode: "sharp" };
 
     if (turn === "right") {
-      // Convex corner: exactly 1 filled pixel touches this vertex.
-      // Look up that pixel's corner radius at this vertex.
-      if (filled === 1) {
-        let r = 0;
-        if (nw) r = nw.corners.br.rounded ? nw.corners.br.radius : 0;
-        else if (ne) r = ne.corners.bl.rounded ? ne.corners.bl.radius : 0;
-        else if (se) r = se.corners.tl.rounded ? se.corners.tl.radius : 0;
-        else if (sw) r = sw.corners.tr.rounded ? sw.corners.tr.radius : 0;
-
-        if (r === 1) {
-          // Full-radius L-corner: determine direction
-          let lcDir = null;
-          if (se) lcDir = "TL";
-          else if (sw) lcDir = "TR";
-          else if (nw) lcDir = "BR";
-          else if (ne) lcDir = "BL";
-          return { radius: 1, mode: "fullLCornerArc", lcDir };
-        }
-        return r > 0 ? { radius: r, mode: "outerArc" } : { radius: 0, mode: "sharp" };
+      if (v.convex) {
+        const { radius, isLCorner, lcDir } = v.convex;
+        if (isLCorner) return { radius: 1, mode: "fullLCornerArc", lcDir };
+        return radius > 0 ? { radius, mode: "outerArc" } : { radius: 0, mode: "sharp" };
       }
-      // 2 filled diagonal (checkerboard) at a right turn — treat as sharp
-      if (filled === 2) {
-        const isDiag = (nw && se && !ne && !sw) || (ne && sw && !nw && !se);
-        if (isDiag) return { radius: 0, mode: "sharp" };
-      }
-      // Shouldn't normally hit this for right turns
+      if (v.pattern === "checkerboard") return { radius: 0, mode: "sharp" };
       return { radius: 0, mode: "sharp" };
     }
 
     if (turn === "left") {
-      // Concave corner: 3 filled pixels. The empty pixel's opposite corner
-      // determines the fillet. Or 2 filled diagonal (checkerboard) at a left turn.
-      if (filled === 3 && rInner > 0) {
-        // Check which pixel is absent — the fillet fills that gap
-        const absentCorner = !nw ? "TL" : !ne ? "TR" : !se ? "BR" : "BL";
-        // Check if the pixel map says there's an inner fillet here.
-        // The fillet flag is on the pixel opposite the empty corner.
-        let hasFillet = false;
-        if (absentCorner === "TL") hasFillet = se?.innerFillets?.tl ?? false;
-        else if (absentCorner === "TR") hasFillet = sw?.innerFillets?.tr ?? false;
-        else if (absentCorner === "BR") hasFillet = nw?.innerFillets?.br ?? false;
-        else if (absentCorner === "BL") hasFillet = ne?.innerFillets?.bl ?? false;
-        if (hasFillet) return { radius: rInner, mode: "innerFillet" };
-      }
-      // Checkerboard left turn: 2 diagonally filled
-      if (filled === 2) {
-        return { radius: 0, mode: "sharp" };
-      }
+      if (v.concave && rInner > 0 && v.concave.eA)
+        return { radius: rInner, mode: "innerFillet" };
+      if (v.checkerboard?.lcTransition)
+        return { radius: 0, mode: "lcArcTransition" };
       return { radius: 0, mode: "sharp" };
     }
 
     return { radius: 0, mode: "sharp" };
   }
 
-  function buildLoopPlans(vertices, edges) {
+  function buildLoopPlans(vertices, edges, _dbgHole) {
     const n = vertices.length;
     const plans = new Array(n);
     for (let i = 0; i < n; i++) {
       const v = vertices[i];
       let plan = vertexPlan(v.x, v.y, v.turn, { bridge: v.bridge });
+      const _dbgInitial = _dbgHole ? `${plan.mode}(r=${plan.radius})` : null;
 
       // At checkerboard right-turn vertices, vertexPlan returns "sharp" because
-      // it sees filled=2 from the global pixelMap. Use edge directions to
-      // determine which pixel the boundary is rounding, and look up that
-      // pixel's actual corner radius from the classifier.
-      if (plan.mode === "sharp" && v.turn === "right" && v.checkerboard) {
+      // it sees 2-filled diagonal. Use edge direction to pick the owner whose
+      // corner the boundary is rounding, then upgrade the plan using owners[].
+      const vInfo = plan.mode === "sharp" && v.turn === "right"
+        ? vertexMap.get(key(v.x, v.y)) : null;
+      if (vInfo?.pattern === "checkerboard") {
         const inEdge = edges[(i - 1 + n) % n];
         const inDx = Math.sign(inEdge.dx), inDy = Math.sign(inEdge.dy);
-        // For CCW boundary at a right turn, the pixel is to the left of travel.
-        let pxKey, cornerName, lcDir;
-        if (inDx === 1) {        // incoming right → pixel at SW
-          pxKey = key(v.x - 1, v.y); cornerName = "tr"; lcDir = "TR";
-        } else if (inDy === 1) { // incoming down → pixel at NW
-          pxKey = key(v.x - 1, v.y - 1); cornerName = "br"; lcDir = "BR";
-        } else if (inDx === -1) { // incoming left → pixel at NE
-          pxKey = key(v.x, v.y - 1); cornerName = "bl"; lcDir = "BL";
-        } else {                  // incoming up → pixel at SE
-          pxKey = key(v.x, v.y); cornerName = "tl"; lcDir = "TL";
-        }
-        const pxInfo = pixelMap.get(pxKey);
-        if (pxInfo) {
-          const r = pxInfo.corners[cornerName].radius;
-          if (r === 1 && fullLCorners) {
-            plan = { radius: 1, mode: "fullLCornerArc", lcDir };
-          } else if (r > 0) {
-            plan = { radius: r, mode: "outerArc" };
+        // Left-of-travel corner name for each incoming direction
+        const cornerName = inDx === 1 ? "tr" : inDy === 1 ? "br" : inDx === -1 ? "bl" : "tl";
+        const owner = vInfo.checkerboard.owners.find(o => o.corner === cornerName);
+        if (owner) {
+          if (owner.isLCorner && fullLCorners) {
+            plan = { radius: 1, mode: "fullLCornerArc", lcDir: owner.corner.toUpperCase() };
+          } else if (owner.radius > 0) {
+            plan = { radius: owner.radius, mode: "outerArc" };
           }
         }
       }
@@ -343,6 +291,10 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
 
 
       plans[i] = plan;
+      if (_dbgHole) {
+        const final = `${plan.mode}(r=${plan.radius}${plan.lcDir ? ','+plan.lcDir : ''}${plan.shortenStart ? ',shStart' : ''}${plan.shortenEnd ? ',shEnd' : ''})`;
+        console.log(`  [plan] i=${i} v=(${v.x},${v.y}) turn=${v.turn} initial=${_dbgInitial} → final=${final}`);
+      }
     }
     return plans;
   }
@@ -360,6 +312,7 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
 
   function serializeLoopPath(vertices, edges, plans, ro, ri, isHole) {
     if (vertices.length === 0) return "";
+    const _dbg = isHole;
     const p = [];
     const n = vertices.length;
 
@@ -371,60 +324,122 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
     const startY = vertices[0].y - prevDy * r0;
 
     p.push(`M${fmt(startX)},${fmt(startY)}`);
+    if (_dbg) console.log(`  [ser] M(${fmt(startX)},${fmt(startY)})`);
     const sweep = 1;
 
     for (let i = 0; i < n; i++) {
       const r = plans[i].radius;
       const edge = edges[i];
-      const rNext = plans[(i + 1) % n].radius;
+      const nextI = (i + 1) % n;
+      const rNext = plans[nextI].radius;
       const odx = Math.sign(edge.dx);
       const ody = Math.sign(edge.dy);
+
+      // Track absolute pen position when it deviates from grid-aligned expectation.
+      // null means pen is at the expected grid position (vertex ± r along edge).
+      let departurePt = null;
 
       if (vertices[i].turn === "right" && r > 0) {
         if (plans[i].mode === "fullLCornerArc") {
           const lcDir = plans[i].lcDir;
           const { pdx, pdy, odx: lodx, ody: lody } = LC_DIRS[lcDir];
-          const arcCx = vertices[i].x + lodx - pdx;
-          const arcCy = vertices[i].y + lody - pdy;
-          const { shortenStart, shortenEnd } = plans[i];
-          const nextI = (i + 1) % n;
-          const prevI = (i - 1 + n) % n;
+          const { shortenEnd } = plans[i];
 
           if (shortenEnd) {
-            // Arc stops where the adjacent concave fillet starts.
-            // eA is on vertical edge, eB on horizontal; pick by incoming direction at concave vertex.
             const nvInfo = vertexMap.get(key(vertices[nextI].x, vertices[nextI].y));
             const pt = (ody !== 0) ? nvInfo.concave.eA : nvInfo.concave.eB;
             p.push(`A1,1,0,0,${sweep},${fmt(pt.px)},${fmt(pt.py)}`);
+            departurePt = { x: pt.px, y: pt.py };
+            if (_dbg) console.log(`  [ser] i=${i} v=(${vertices[i].x},${vertices[i].y}) VERTEX: fullLCornerArc(shEnd) → A to (${fmt(pt.px)},${fmt(pt.py)}) departurePt=SET`);
           } else {
             const tgtX = vertices[i].x + lodx * r;
             const tgtY = vertices[i].y + lody * r;
             p.push(`A1,1,0,0,${sweep},${fmt(tgtX)},${fmt(tgtY)}`);
+            if (_dbg) console.log(`  [ser] i=${i} v=(${vertices[i].x},${vertices[i].y}) VERTEX: fullLCornerArc → A to (${fmt(tgtX)},${fmt(tgtY)})`);
           }
         } else {
           const adx = fmt(odx * r + prevDx * r);
           const ady = fmt(ody * r + prevDy * r);
           p.push(`a${fmt(r)},${fmt(r)},0,0,${sweep},${adx},${ady}`);
+          if (_dbg) console.log(`  [ser] i=${i} v=(${vertices[i].x},${vertices[i].y}) VERTEX: outerArc → a(${adx},${ady})`);
         }
       } else if (vertices[i].turn === "left" && r > 0) {
         // Inner fillet: look up pre-computed geometry from vertexMap.
-        // Convention: eA is on the vertical edge, eB is on the horizontal edge.
-        // Pick departure endpoint based on outgoing direction.
         const vInfo = vertexMap.get(key(vertices[i].x, vertices[i].y));
         if (vInfo?.concave?.eA) {
-          const { eA, eB, cp } = vInfo.concave;
+          const { eA, eB, cp, aOnArc, bOnArc } = vInfo.concave;
           const endPt = (ody !== 0) ? eA : eB;
           p.push(`Q${fmt(cp.x)},${fmt(cp.y)},${fmt(endPt.px)},${fmt(endPt.py)}`);
+          const departureOnArc = (ody !== 0) ? aOnArc : bOnArc;
+          if (departureOnArc) departurePt = { x: endPt.px, y: endPt.py };
+          if (_dbg) console.log(`  [ser] i=${i} v=(${vertices[i].x},${vertices[i].y}) VERTEX: innerFillet → Q to (${fmt(endPt.px)},${fmt(endPt.py)}) pick=${ody!==0?'eA':'eB'} departurePt=${departureOnArc?'SET':'null'}`);
         } else {
-          // Fallback: standard relative quadratic
           p.push(`q${fmt(prevDx * r)},${fmt(prevDy * r)},${fmt(prevDx * r + odx * r)},${fmt(prevDy * r + ody * r)}`);
+          if (_dbg) console.log(`  [ser] i=${i} v=(${vertices[i].x},${vertices[i].y}) VERTEX: innerFillet(fallback) → q`);
         }
+      } else if (plans[i].mode === "lcArcTransition") {
+        p.push(`L${fmt(vertices[i].x)},${fmt(vertices[i].y)}`);
+        departurePt = { x: vertices[i].x, y: vertices[i].y };
+        if (_dbg) console.log(`  [ser] i=${i} v=(${vertices[i].x},${vertices[i].y}) VERTEX: lcArcTransition → L(${vertices[i].x},${vertices[i].y}) departurePt=SET`);
+      } else {
+        if (_dbg) console.log(`  [ser] i=${i} v=(${vertices[i].x},${vertices[i].y}) VERTEX: (none) mode=${plans[i].mode} r=${r} turn=${vertices[i].turn}`);
       }
 
-      const edgeLen = edge.len - r - rNext;
-      if (edgeLen > 0.001) {
-        if (ody === 0) p.push(`h${fmt(odx * edgeLen)}`);
-        else p.push(`v${fmt(ody * edgeLen)}`);
+      // --- Edge segment from vertex i to vertex i+1 ---
+      if (departurePt) {
+        // Pen is at an absolute position that may be off-grid.
+        // Compute the target: where the next vertex expects the pen to arrive.
+        const nextV = vertices[nextI];
+
+        // If the next vertex is a fullLCornerArc with shortenStart, it starts
+        // exactly at our current pen position — no edge needed.
+        if (plans[nextI].mode === "fullLCornerArc" && plans[nextI].shortenStart) {
+          // Arc picks up from current pen — skip edge.
+          if (_dbg) console.log(`  [ser] i=${i} EDGE: departurePt=(${fmt(departurePt.x)},${fmt(departurePt.y)}) → skip (next shStart)`);
+        } else {
+          let targetX, targetY;
+          let _dbgBranch = "";
+          if (plans[nextI].mode === "lcArcTransition") {
+            targetX = nextV.x; targetY = nextV.y;
+            _dbgBranch = "lcArcTransition";
+          } else if (plans[nextI].mode === "innerFillet") {
+            // Concave fillet: arrive at the on-arc (or grid-aligned) arrival endpoint
+            const nextVInfo = vertexMap.get(key(nextV.x, nextV.y));
+            if (nextVInfo?.concave?.eA) {
+              const arrivalPt = (ody !== 0) ? nextVInfo.concave.eA : nextVInfo.concave.eB;
+              targetX = arrivalPt.px; targetY = arrivalPt.py;
+              _dbgBranch = `innerFillet(${ody!==0?'eA':'eB'})`;
+            } else {
+              targetX = nextV.x - odx * rNext;
+              targetY = nextV.y - ody * rNext;
+              _dbgBranch = "innerFillet(fallback)";
+            }
+          } else {
+            targetX = nextV.x - odx * rNext;
+            targetY = nextV.y - ody * rNext;
+            _dbgBranch = `grid(nextMode=${plans[nextI].mode})`;
+          }
+          const dx = targetX - departurePt.x;
+          const dy = targetY - departurePt.y;
+          if (Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001) {
+            if (Math.abs(dy) < 0.001) p.push(`h${fmt(dx)}`);
+            else if (Math.abs(dx) < 0.001) p.push(`v${fmt(dy)}`);
+            else p.push(`L${fmt(targetX)},${fmt(targetY)}`);
+            if (_dbg) console.log(`  [ser] i=${i} EDGE: departurePt=(${fmt(departurePt.x)},${fmt(departurePt.y)}) → target=(${fmt(targetX)},${fmt(targetY)}) branch=${_dbgBranch} cmd=${Math.abs(dy)<0.001?'h':'v/L'}`);
+          } else {
+            if (_dbg) console.log(`  [ser] i=${i} EDGE: departurePt=(${fmt(departurePt.x)},${fmt(departurePt.y)}) → target=(${fmt(targetX)},${fmt(targetY)}) branch=${_dbgBranch} SKIP(zero)`);
+          }
+        }
+      } else {
+        // Standard grid-aligned edge: pen is at expected position.
+        const edgeLen = edge.len - r - rNext;
+        if (edgeLen > 0.001) {
+          if (ody === 0) p.push(`h${fmt(odx * edgeLen)}`);
+          else p.push(`v${fmt(ody * edgeLen)}`);
+          if (_dbg) console.log(`  [ser] i=${i} EDGE: grid edgeLen=${fmt(edgeLen)} dir=(${odx},${ody})`);
+        } else {
+          if (_dbg) console.log(`  [ser] i=${i} EDGE: grid SKIP(len=${fmt(edgeLen)})`);
+        }
       }
 
       prevDx = odx;
@@ -443,7 +458,7 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
     if (ro <= 0) return "";
     const parts = [];
     for (const v of verts) {
-      if (!v.checkerboard) continue;
+      if (vertexMap.get(key(v.x, v.y))?.pattern !== "checkerboard") continue;
       const vk = key(v.x, v.y);
       if (emittedSet.has(vk)) continue;
       if (diagConnections.has(vk)) continue; // bridge handles geometry
@@ -481,21 +496,6 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
   }
 
   // ================================================================
-  // Annotate checkerboard flag on vertices
-  // (Minimal annotation — just the flag, not full contour annotation)
-  // ================================================================
-  function markCheckerboard(vertices) {
-    for (const v of vertices) {
-      const hasNW = allPixels.has(key(v.x - 1, v.y - 1));
-      const hasNE = allPixels.has(key(v.x, v.y - 1));
-      const hasSE = allPixels.has(key(v.x, v.y));
-      const hasSW = allPixels.has(key(v.x - 1, v.y));
-      const filled = (hasNW ? 1 : 0) + (hasNE ? 1 : 0) + (hasSE ? 1 : 0) + (hasSW ? 1 : 0);
-      if (filled === 2 && hasNW === hasSE) v.checkerboard = true;
-    }
-  }
-
-  // ================================================================
   // Winding check for holes
   // ================================================================
   function windingFromVertices(verts, px, py) {
@@ -527,12 +527,12 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
 
   // Pass 1: trace boundary, record arcs, serialize path (no notches yet)
   function prepareLoop(verts, isHole) {
-    markCheckerboard(verts);
+    if (isHole) console.log(`\n[HOLE LOOP] ${verts.length} vertices: ${verts.map(v => `(${v.x},${v.y})${v.turn[0]}`).join(' → ')}`);
     const edges = buildLoopEdges(verts);
-    const plans = buildLoopPlans(verts, edges);
+    const plans = buildLoopPlans(verts, edges, isHole);
     // Record which checkerboard vertices have arcs in this boundary
     for (let i = 0; i < verts.length; i++) {
-      if (verts[i].checkerboard && plans[i].radius > 0 && verts[i].turn === "right") {
+      if (vertexMap.get(key(verts[i].x, verts[i].y))?.pattern === "checkerboard" && plans[i].radius > 0 && verts[i].turn === "right") {
         const inEdge = edges[(i - 1 + verts.length) % verts.length];
         const inDx = Math.sign(inEdge.dx), inDy = Math.sign(inEdge.dy);
         let dir;
