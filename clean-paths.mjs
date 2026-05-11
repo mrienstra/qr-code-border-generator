@@ -8,7 +8,7 @@
  */
 
 import { key, unkey, snap, fmt } from './pixel-paths.mjs';
-import { classifyPixels } from './pixel-classify.mjs';
+import { classifyPixels, computeVertexMap } from './pixel-classify.mjs';
 
 export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDiagonals = 0, fullLCorners = false, skipCheckerLCorners = false) {
   if (squares.size === 0) return { path: "", fillets: "" };
@@ -17,6 +17,9 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
   const pixelMap = classifyPixels(squares, allPixels, {
     ro: rOuter, ri: rInner, connectDiagonals, fullLCorners, skipCheckerLCorners,
   });
+
+  // --- Vertex map (pre-computed geometry for every grid vertex) ---
+  const vertexMap = computeVertexMap(pixelMap, allPixels, { ro: rOuter, ri: rInner });
 
   // --- Diagonal connections (derived from pixel map) ---
   const diagConnections = new Map(); // vertexKey → "br" | "bl"
@@ -348,68 +351,12 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
   // Serialization layer
   // ================================================================
 
-  // At a checkerboard vertex, find which diagonal pixel has an L-corner arc
-  // with an endpoint in the given direction. Returns the lcDir or null.
-  // Used by inner fillet code to adjust endpoints to match L-corner notch arcs.
-  function checkerNotchLcDir(vx, vy, dx, dy) {
-    const hasNE = allPixels.has(key(vx, vy - 1));
-    const hasSW = allPixels.has(key(vx - 1, vy));
-    let pxKey, cornerName, lcDir;
-    if (hasNE && hasSW) {
-      // NE-SW diagonal: UP/RIGHT → NE pixel, DOWN/LEFT → SW pixel
-      if (dy < 0 || dx > 0) { pxKey = key(vx, vy - 1); cornerName = "bl"; lcDir = "BL"; }
-      else { pxKey = key(vx - 1, vy); cornerName = "tr"; lcDir = "TR"; }
-    } else {
-      // NW-SE diagonal: UP/LEFT → NW pixel, DOWN/RIGHT → SE pixel
-      if (dy < 0 || dx < 0) { pxKey = key(vx - 1, vy - 1); cornerName = "br"; lcDir = "BR"; }
-      else { pxKey = key(vx, vy); cornerName = "tl"; lcDir = "TL"; }
-    }
-    const info = pixelMap.get(pxKey);
-    return (info && info.corners[cornerName].radius === 1) ? lcDir : null;
-  }
-
-  // Arc-line intersection for L-corner fillet shortening
-  // isVerticalLine: true if the line is vertical (x=lineCoord), false if horizontal (y=lineCoord)
-  function arcLineIntersect(cx, cy, isVerticalLine, lineCoord, sign) {
-    if (isVerticalLine) {
-      const dx = lineCoord - cx;
-      const dy = sign * Math.sqrt(Math.max(0, 1 - dx * dx));
-      const len = Math.hypot(dx, dy);
-      return { px: lineCoord, py: cy + dy, tx: dy / len, ty: -dx / len };
-    } else {
-      const dy = lineCoord - cy;
-      const dx = sign * Math.sqrt(Math.max(0, 1 - dy * dy));
-      const len = Math.hypot(dx, dy);
-      return { px: cx + dx, py: lineCoord, tx: dy / len, ty: -dx / len };
-    }
-  }
-
-  function filletControlPoint(eA, eB) {
-    const det = eA.tx * (-eB.ty) - (-eB.tx) * eA.ty;
-    if (Math.abs(det) < 1e-10) return { cpx: (eA.px + eB.px) / 2, cpy: (eA.py + eB.py) / 2 };
-    const alpha = ((eB.px - eA.px) * (-eB.ty) - (-eB.tx) * (eB.py - eA.py)) / det;
-    return { cpx: eA.px + alpha * eA.tx, cpy: eA.py + alpha * eA.ty };
-  }
-
   const LC_DIRS = {
     TL: { pdx: 0, pdy: -1, odx: 1, ody: 0 },
     TR: { pdx: 1, pdy: 0, odx: 0, ody: 1 },
     BL: { pdx: -1, pdy: 0, odx: 0, ody: -1 },
     BR: { pdx: 0, pdy: 1, odx: -1, ody: 0 },
   };
-
-  function lcArcFilletPoint(lcVert, vx, vy, edgeDx, edgeDy, ri) {
-    const lcDir = LC_DIRS[lcVert.lcDir || lcVert.fullRadius];
-    const arcCx = lcVert.x + lcDir.odx - lcDir.pdx;
-    const arcCy = lcVert.y + lcDir.ody - lcDir.pdy;
-    const edgeVertical = edgeDy !== 0;
-    const lineCoord = edgeVertical ? (vy - edgeDy * ri) : (vx - edgeDx * ri);
-    const sign = edgeVertical ? Math.sign(vx - arcCx) : Math.sign(vy - arcCy);
-    const pt = arcLineIntersect(arcCx, arcCy, !edgeVertical, lineCoord, sign);
-    const dx = pt.px - arcCx, dy = pt.py - arcCy;
-    const len = Math.hypot(dx, dy);
-    return { px: pt.px, py: pt.py, tx: dy / len, ty: -dx / len };
-  }
 
   function serializeLoopPath(vertices, edges, plans, ro, ri, isHole) {
     if (vertices.length === 0) return "";
@@ -444,11 +391,10 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
           const prevI = (i - 1 + n) % n;
 
           if (shortenEnd) {
-            const nv = vertices[nextI];
-            const edgeV = ody !== 0;
-            const line = edgeV ? (nv.y - ody * ri) : (nv.x - odx * ri);
-            const sign = edgeV ? Math.sign(nv.x - arcCx) : Math.sign(nv.y - arcCy);
-            const pt = arcLineIntersect(arcCx, arcCy, !edgeV, line, sign);
+            // Arc stops where the adjacent concave fillet starts.
+            // eA is on vertical edge, eB on horizontal; pick by incoming direction at concave vertex.
+            const nvInfo = vertexMap.get(key(vertices[nextI].x, vertices[nextI].y));
+            const pt = (ody !== 0) ? nvInfo.concave.eA : nvInfo.concave.eB;
             p.push(`A1,1,0,0,${sweep},${fmt(pt.px)},${fmt(pt.py)}`);
           } else {
             const tgtX = vertices[i].x + lodx * r;
@@ -461,38 +407,17 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
           p.push(`a${fmt(r)},${fmt(r)},0,0,${sweep},${adx},${ady}`);
         }
       } else if (vertices[i].turn === "left" && r > 0) {
-        const prevI = (i - 1 + n) % n;
-        const nextI = (i + 1) % n;
-        const prevFR = plans[prevI].mode === "fullLCornerArc" && plans[prevI].shortenEnd;
-        const nextFR = plans[nextI].mode === "fullLCornerArc" && plans[nextI].shortenStart;
-        if (prevFR && nextFR && ri > 0) {
-          const vx = vertices[i].x, vy = vertices[i].y;
-          const pv = { ...vertices[prevI], fullRadius: plans[prevI].lcDir };
-          const nv = { ...vertices[nextI], fullRadius: plans[nextI].lcDir };
-          const eA = lcArcFilletPoint(pv, vx, vy, prevDx, prevDy, ri);
-          const eB = lcArcFilletPoint(nv, vx, vy, -odx, -ody, ri);
-          const { cpx, cpy } = filletControlPoint(eA, eB);
-          p.push(`Q${fmt(cpx)},${fmt(cpy)},${fmt(eB.px)},${fmt(eB.py)}`);
-        } else if (prevFR && ri > 0) {
-          const vx = vertices[i].x, vy = vertices[i].y;
-          const pv = { ...vertices[prevI], fullRadius: plans[prevI].lcDir };
-          const eA = lcArcFilletPoint(pv, vx, vy, prevDx, prevDy, ri);
-          const eB = { px: vx + odx * ri, py: vy + ody * ri, tx: -odx, ty: -ody };
-          const { cpx, cpy } = filletControlPoint(eA, eB);
-          p.push(`Q${fmt(cpx)},${fmt(cpy)},${fmt(eB.px)},${fmt(eB.py)}`);
-        } else if (nextFR && ri > 0) {
-          const vx = vertices[i].x, vy = vertices[i].y;
-          const eA = { px: vx - prevDx * ri, py: vy - prevDy * ri, tx: prevDx, ty: prevDy };
-          const nv = { ...vertices[nextI], fullRadius: plans[nextI].lcDir };
-          const eB = lcArcFilletPoint(nv, vx, vy, -odx, -ody, ri);
-          const { cpx, cpy } = filletControlPoint(eA, eB);
-          p.push(`Q${fmt(cpx)},${fmt(cpy)},${fmt(eB.px)},${fmt(eB.py)}`);
+        // Inner fillet: look up pre-computed geometry from vertexMap.
+        // Convention: eA is on the vertical edge, eB is on the horizontal edge.
+        // Pick departure endpoint based on outgoing direction.
+        const vInfo = vertexMap.get(key(vertices[i].x, vertices[i].y));
+        if (vInfo?.concave?.eA) {
+          const { eA, eB, cp } = vInfo.concave;
+          const endPt = (ody !== 0) ? eA : eB;
+          p.push(`Q${fmt(cp.x)},${fmt(cp.y)},${fmt(endPt.px)},${fmt(endPt.py)}`);
         } else {
-          const cpx = prevDx * r;
-          const cpy = prevDy * r;
-          const endx = prevDx * r + odx * r;
-          const endy = prevDy * r + ody * r;
-          p.push(`q${fmt(cpx)},${fmt(cpy)},${fmt(endx)},${fmt(endy)}`);
+          // Fallback: standard relative quadratic
+          p.push(`q${fmt(prevDx * r)},${fmt(prevDy * r)},${fmt(prevDx * r + odx * r)},${fmt(prevDy * r + ody * r)}`);
         }
       }
 
