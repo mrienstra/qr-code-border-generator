@@ -588,23 +588,14 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
     return [...rot1, { x: vx, y: vy, turn: "right" }, ...rot2, { x: vx, y: vy, turn: "right" }];
   }
 
-  // Helper: prepare a component with its holes (no diagonal splicing)
-  function prepareComponent(comp) {
-    const outerVerts = traceBoundary(comp);
-    prepareLoop(outerVerts, false);
-    const holes = findHoles(comp);
+  // Merge lcTransition holes and emit them.
+  // `holes` is an array of pixel-key Sets already validated as inside the boundary.
+  function mergeAndEmitHoles(holes) {
     if (holes.length < 2) {
-      // No merging needed
-      for (const hole of holes) {
-        const [hx, hy] = unkey([...hole][0]);
-        if (windingFromVertices(outerVerts, hx + 0.5, hy + 0.5) !== 0) {
-          prepareLoop(traceHoleBoundary(hole), true);
-        }
-      }
+      for (const hole of holes) prepareLoop(traceHoleBoundary(hole), true);
       return;
     }
 
-    // Trace each hole boundary
     const holeLoops = holes.map(h => traceHoleBoundary(h));
 
     // Map each hole pixel to its loop index
@@ -645,24 +636,25 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
       if (merged) {
         holeLoops[lA] = merged;
         holeLoops[lB] = null; // mark as consumed
-        // Update pixelToLoop so future splices find the merged loop
-        for (let i = 0; i < holes.length; i++) {
-          if (ufFind(i) === ufFind(lA)) {
-            // Redirect to lA's current root target
-            // (spliced loops live in holeLoops[lA])
-          }
-        }
       }
     }
 
     // Emit surviving loops
     for (let i = 0; i < holeLoops.length; i++) {
-      if (!holeLoops[i]) continue;
-      const [hx, hy] = unkey([...holes[i]][0]);
-      if (windingFromVertices(outerVerts, hx + 0.5, hy + 0.5) !== 0) {
-        prepareLoop(holeLoops[i], true);
-      }
+      if (holeLoops[i]) prepareLoop(holeLoops[i], true);
     }
+  }
+
+  // Helper: prepare a component with its holes (no diagonal splicing)
+  function prepareComponent(comp) {
+    const outerVerts = traceBoundary(comp);
+    prepareLoop(outerVerts, false);
+    const holes = findHoles(comp);
+    const validHoles = holes.filter(hole => {
+      const [hx, hy] = unkey([...hole][0]);
+      return windingFromVertices(outerVerts, hx + 0.5, hy + 0.5) !== 0;
+    });
+    mergeAndEmitHoles(validHoles);
   }
 
   if (diagConnections.size === 0) {
@@ -854,9 +846,7 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
           for (const ch of cycleHoles) w += windingFromVertices(ch, px, py);
           return w !== 0;
         });
-        for (const hole of neededHoles) {
-          prepareLoop(traceHoleBoundary(hole), true);
-        }
+        mergeAndEmitHoles(neededHoles);
       }
     }
     emitDeferredNotches();
