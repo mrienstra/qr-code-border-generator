@@ -113,6 +113,16 @@ export function classifyPixels(squares, allPixels, opts) {
     const filletBR = hasR && hasD && !hasBR;
     const filletBL = hasL && hasD && !hasBL;
 
+    // Tip detection: exactly 1 cardinal neighbor, and no diagonal bridges
+    // on the exposed end. Direction points away from the single neighbor.
+    let tip = null;
+    if (remCurrent === 1) {
+      if (hasD && !diagTL && !diagTR)      tip = "up";
+      else if (hasU && !diagBL && !diagBR)  tip = "down";
+      else if (hasR && !diagTL && !diagBL)  tip = "left";
+      else if (hasL && !diagTR && !diagBR)  tip = "right";
+    }
+
     map.set(k, {
       x, y,
       corners: {
@@ -123,6 +133,7 @@ export function classifyPixels(squares, allPixels, opts) {
       },
       innerFillets: { tl: filletTL, tr: filletTR, br: filletBR, bl: filletBL },
       diagBridges: { tl: diagTL, tr: diagTR, br: diagBR, bl: diagBL },
+      tip,
     });
   }
 

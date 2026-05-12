@@ -81,6 +81,23 @@ for (const [, info] of pixelMap) {
   }
 }
 
+// Draw tip annotations
+for (const [, info] of pixelMap) {
+  if (!info.tip) continue;
+  const cx = ox + (info.x + 0.5) * cellPx;
+  const cy = oy + (info.y + 0.5) * cellPx;
+  // Arrow pointing in tip direction
+  const arrowLen = cellPx * 0.3;
+  const dx = info.tip === "right" ? 1 : info.tip === "left" ? -1 : 0;
+  const dy = info.tip === "down" ? 1 : info.tip === "up" ? -1 : 0;
+  const ax = cx + dx * arrowLen, ay = cy + dy * arrowLen;
+  // Perpendicular for arrowhead
+  const px = -dy * 5, py = dx * 5;
+  const tailX = cx - dx * arrowLen * 0.5, tailY = cy - dy * arrowLen * 0.5;
+  parts.push(`<line x1="${tailX}" y1="${tailY}" x2="${ax}" y2="${ay}" stroke="#d4a" stroke-width="2.5" opacity="0.8"/>`);
+  parts.push(`<polygon points="${ax},${ay} ${ax - dx * 8 + px},${ay - dy * 8 + py} ${ax - dx * 8 - px},${ay - dy * 8 - py}" fill="#d4a" opacity="0.8"/>`);
+}
+
 // Draw vertex map annotations
 for (const [, v] of vertexMap) {
   const sx = ox + v.vx * cellPx;
@@ -130,13 +147,14 @@ for (const [, v] of vertexMap) {
 }
 
 // Legend
-const lx = 10, ly = svgH - 100;
+const lx = 10, ly = svgH - 115;
 parts.push(`<g font-size="10">`);
 parts.push(`<text x="${lx}" y="${ly}" fill="#333" font-weight="bold">Legend:</text>`);
 parts.push(`<circle cx="${lx + 8}" cy="${ly + 15}" r="4" fill="#22e" opacity="0.7"/><text x="${lx + 18}" y="${ly + 19}" fill="#333">outer arc (r=${ro})</text>`);
 parts.push(`<circle cx="${lx + 8}" cy="${ly + 30}" r="7" fill="#e22" opacity="0.7"/><text x="${lx + 18}" y="${ly + 34}" fill="#333">L-corner (r=1)</text>`);
 parts.push(`<path d="M${lx},${ly + 48} Q${lx + 10},${ly + 42} ${lx + 16},${ly + 48}" fill="none" stroke="#2a2" stroke-width="1.5"/><text x="${lx + 22}" y="${ly + 52}" fill="#333">fillet curve (green=grid, red=on arc)</text>`);
 parts.push(`<circle cx="${lx + 8}" cy="${ly + 65}" r="3" fill="#f90"/><text x="${lx + 18}" y="${ly + 69}" fill="#333">checkerboard vertex</text>`);
+parts.push(`<line x1="${lx + 3}" y1="${ly + 82}" x2="${lx + 13}" y2="${ly + 78}" stroke="#d4a" stroke-width="2.5"/><polygon points="${lx + 13},${ly + 78} ${lx + 7},${ly + 75} ${lx + 9},${ly + 82}" fill="#d4a"/><text x="${lx + 22}" y="${ly + 84}" fill="#333">tip (arrow = direction)</text>`);
 parts.push(`</g>`);
 parts.push(`</svg>`);
 
@@ -157,7 +175,8 @@ for (const [, info] of pixelMap) {
     .filter(([, v]) => v)
     .map(([name]) => name)
     .join(",") || "none";
-  console.log(`  pixel(${info.x},${info.y}): corners[${cStr}] fillets[${fStr}]`);
+  const tipStr = info.tip ? ` TIP→${info.tip}` : "";
+  console.log(`  pixel(${info.x},${info.y}): corners[${cStr}] fillets[${fStr}]${tipStr}`);
 }
 
 console.log(`\n--- vertexMap (${vertexMap.size} entries) ---`);
