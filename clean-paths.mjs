@@ -609,10 +609,13 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
     const parent = holes.map((_, i) => i);
     function ufFind(x) { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; }
 
-    // Find lcTransition vertices and splice connected holes immediately.
+    // Find checkerboard vertices between holes and splice them immediately.
+    // Any non-bridged checkerboard vertex where both empty quadrants are holes
+    // triggers a merge (not just lcTransition — the owner lookup in buildLoopPlans
+    // determines the correct arc radius for each splice direction).
     // Doing discovery+splice in one pass avoids stale-index problems.
     for (const [, v] of vertexMap) {
-      if (!v.checkerboard?.lcTransition) continue;
+      if (!v.checkerboard || v.checkerboard.bridged) continue;
       const { occupancy } = v;
       let emptyA, emptyB;
       if (!occupancy.nw && !occupancy.se) {
