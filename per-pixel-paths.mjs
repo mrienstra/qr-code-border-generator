@@ -13,7 +13,7 @@ export function squaresToPath(squares) {
   }).join(" ");
 }
 
-export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagonals = false, diagOnly = false, jiggle = 0, fullLCorners = false, skipCheckerLCorners = false, connectDiagonalsOrder = "default") {
+export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagonals = false, diagOnly = false, jiggle = 0, fullLCorners = false, skipCheckerLCorners = false, connectDiagonalsOrder = "default", tipStyle = "none") {
   const sorted = [...squares].map(unkey).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
   // Outer corner formatting
   const ro = rOuter;
@@ -142,9 +142,49 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
       if (br && hasL && hasU && !(skipCheckerLCorners && hasBR)) brR = 1;
       if (bl && hasR && hasU && !(skipCheckerLCorners && hasBL)) blR = 1;
     }
+    // Tip detection: pixel with exactly 1 cardinal neighbor and no diagonal
+    // bridges on the exposed end. tipDir points away from the neighbor.
+    let tipDir = null;
+    if (tipStyle !== "none" && remCurrent === 1) {
+      if (hasD && !diagTL && !diagTR)      tipDir = "up";
+      else if (hasU && !diagBL && !diagBR)  tipDir = "down";
+      else if (hasR && !diagTL && !diagBL)  tipDir = "left";
+      else if (hasL && !diagTR && !diagBR)  tipDir = "right";
+    }
+
     // Outer corners: rounded pixel outline
     let path;
-    if (!tl && !tr && !br && !bl) {
+    if (tipDir) {
+      // Tip shapes: two cubic Beziers meeting at a cusp (sharp point)
+      // at the center of the exposed edge. Each curve departs the base
+      // corner perpendicular to the base, then sweeps inward to arrive
+      // at the tip with tangent parallel to the base.
+      //
+      // "pointed": aggressive narrowing — inner CPs at ~35% inset from
+      //   the edge, creating a prominent leaf/spear shape.
+      // "streamlined": gentle narrowing — inner CPs at ~15% inset,
+      //   subtle tapering that blends with rounded pixel style.
+      const sharp = tipStyle === "pointed";
+      const a = sharp ? 0.35 : 0.4;   // outer CP distance from tip end
+      const b = sharp ? 0.65 : 0.85;  // inner CP distance from pixel edge
+      if (tipDir === "up") {
+        path = `M${fmt(x)},${fmt(y + 1)}h1`
+          + `C${fmt(x + 1)},${fmt(y + a)},${fmt(x + b)},${fmt(y)},${fmt(x + 0.5)},${fmt(y)}`
+          + `C${fmt(x + 1 - b)},${fmt(y)},${fmt(x)},${fmt(y + a)},${fmt(x)},${fmt(y + 1)}z`;
+      } else if (tipDir === "down") {
+        path = `M${fmt(x + 1)},${fmt(y)}h-1`
+          + `C${fmt(x)},${fmt(y + 1 - a)},${fmt(x + 1 - b)},${fmt(y + 1)},${fmt(x + 0.5)},${fmt(y + 1)}`
+          + `C${fmt(x + b)},${fmt(y + 1)},${fmt(x + 1)},${fmt(y + 1 - a)},${fmt(x + 1)},${fmt(y)}z`;
+      } else if (tipDir === "left") {
+        path = `M${fmt(x + 1)},${fmt(y)}v1`
+          + `C${fmt(x + a)},${fmt(y + 1)},${fmt(x)},${fmt(y + b)},${fmt(x)},${fmt(y + 0.5)}`
+          + `C${fmt(x)},${fmt(y + 1 - b)},${fmt(x + a)},${fmt(y)},${fmt(x + 1)},${fmt(y)}z`;
+      } else { // right
+        path = `M${fmt(x)},${fmt(y + 1)}v-1`
+          + `C${fmt(x + 1 - a)},${fmt(y)},${fmt(x + 1)},${fmt(y + 1 - b)},${fmt(x + 1)},${fmt(y + 0.5)}`
+          + `C${fmt(x + 1)},${fmt(y + b)},${fmt(x + 1 - a)},${fmt(y + 1)},${fmt(x)},${fmt(y + 1)}z`;
+      }
+    } else if (!tl && !tr && !br && !bl) {
       path = `M${fmt(x)},${fmt(y)}h1v1h-1z`;
     } else if (jiggle === 0 && tlR === ro && trR === ro && brR === ro && blR === ro) {
       // Fast path: uniform radius, reuse preformatted arc string

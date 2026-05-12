@@ -417,6 +417,14 @@
               <label for="diag-only">Suppress corners at diagonals</label>
             </div>
             <div class="field">
+              <label>Tip style</label>
+              <select id="tip-style">
+                <option value="none">None</option>
+                <option value="pointed">Pointed</option>
+                <option value="streamlined">Streamlined</option>
+              </select>
+            </div>
+            <div class="field">
               <label>Jiggle</label>
               <div class="field-row">
                 <input type="range" id="jiggle" min="0" max="1" step="0.01" value="0">
@@ -583,6 +591,7 @@
     const connectDiagonalsValue = document.getElementById("connect-diagonals-value");
     const cdOrderSelect = document.getElementById("cd-order");
     const diagOnlyCheckbox = document.getElementById("diag-only");
+    const tipStyleSelect = document.getElementById("tip-style");
     const jiggleSlider = document.getElementById("jiggle");
     const jiggleValue = document.getElementById("jiggle-value");
     const wobbleFreqSlider = document.getElementById("wobble-freq");
@@ -665,7 +674,7 @@
       nf: "0",
       obf: "0", otl: "0", otr: "0", obl: "0", oal: "0", oeo: "0",
       obd: "0", obt: "rgba(0,0,30,0.1)",
-      rp: "0", rpr: "0.3", rpri: "0.3", flc: "0", cd: "0", cdo: "default", dgo: "0", rj: "0", cp: "0",
+      rp: "0", rpr: "0.3", rpri: "0.3", flc: "0", cd: "0", cdo: "default", dgo: "0", ts: "none", rj: "0", cp: "0",
       wf: "0", wo: "3", ws: "0",
       dbg: "0",
     };
@@ -706,6 +715,7 @@
         cd: connectDiagonalsSlider.value,
         cdo: cdOrderSelect.value,
         dgo: diagOnlyCheckbox.checked ? "1" : "0",
+        ts: tipStyleSelect.value,
         rj: jiggleSlider.value,
         wf: wobbleFreqSlider.value, wo: wobbleOctavesSlider.value, ws: wobbleScaleSlider.value,
         dbg: colorful.checked ? "1" : "0",
@@ -788,6 +798,7 @@
       if (get("cd") != null) { connectDiagonalsSlider.value = get("cd"); connectDiagonalsValue.textContent = cdLabel(get("cd")); }
       if (get("cdo") != null) cdOrderSelect.value = get("cdo");
       if (get("dgo") != null) diagOnlyCheckbox.checked = get("dgo") === "1";
+      if (get("ts") != null) tipStyleSelect.value = get("ts");
       if (get("rj") != null) { jiggleSlider.value = get("rj"); jiggleValue.textContent = get("rj"); }
       if (get("wf") != null) { wobbleFreqSlider.value = get("wf"); wobbleFreqValue.textContent = get("wf"); }
       if (get("wo") != null) { wobbleOctavesSlider.value = get("wo"); wobbleOctavesValue.textContent = get("wo"); }
@@ -844,6 +855,7 @@
         connectDiagonals: parseFloat(connectDiagonalsSlider.value),
         connectDiagonalsOrder: cdOrderSelect.value,
         diagOnly: diagOnlyCheckbox.checked,
+        tipStyle: tipStyleSelect.value,
         jiggle: parseFloat(jiggleSlider.value),
         fullLCorners: fullLCornersCheckbox.checked,
         skipCheckerLCorners: skipCheckerLCornersCheckbox.checked,
@@ -983,6 +995,7 @@
     });
     cdOrderSelect.addEventListener("change", redraw);
     diagOnlyCheckbox.addEventListener("change", () => redraw());
+    tipStyleSelect.addEventListener("change", redraw);
     fullLCornersCheckbox.addEventListener("change", () => {
       skipCheckerLCornersRow.style.display = fullLCornersCheckbox.checked ? "" : "none";
       redraw();

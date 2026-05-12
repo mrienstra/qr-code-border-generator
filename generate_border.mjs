@@ -141,6 +141,7 @@ export function generate(svgText, {
   connectDiagonals = 0,
   connectDiagonalsOrder = "default",
   diagOnly = false,
+  tipStyle = "none",
   jiggle = 0,
   fullLCorners = false,
   skipCheckerLCorners = false,
@@ -348,7 +349,7 @@ export function generate(svgText, {
     } else if (useContour) {
       toPath = (sq) => squaresToContourPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, fullLCorners, skipCheckerLCorners);
     } else {
-      toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, diagOnly, jiggle, fullLCorners, skipCheckerLCorners, connectDiagonalsOrder);
+      toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, diagOnly, jiggle, fullLCorners, skipCheckerLCorners, connectDiagonalsOrder, tipStyle);
     }
 
     // Diagnostic: check for adjacency mismatches (floating-point key issues)
