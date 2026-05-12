@@ -28,14 +28,7 @@
 <h1>Tip Profile Editor</h1>
 
 <div class="top">
-  <select id="style-select">
-    <option value="pointed">Pointed</option>
-    <option value="streamlined">Streamlined</option>
-    <option value="paw" selected>Paw</option>
-    <option value="claw">Claw</option>
-    <option value="stubby-paw">Stubby paw</option>
-    <option value="stubby-claw">Stubby claw</option>
-  </select>
+  <select id="style-select"></select>
   <button id="copy-btn">Copy constants</button>
   <button id="export-btn">Export SVG</button>
   <span id="copy-msg"></span>
@@ -58,7 +51,7 @@
 <div class="code-out" id="code-out"></div>
 
 <script type="module">
-import { TIP_PROFILES } from "./per-pixel-paths.mjs";
+import { TIP_PROFILES, buildLobedTipPath } from "./per-pixel-paths.mjs";
 
 // Deep-copy defaults so we can reset
 const DEFAULTS = JSON.parse(JSON.stringify(TIP_PROFILES));
@@ -97,59 +90,7 @@ function buildPath(style, params) {
   const ps = (u, v) => `${f(u)},${f(v * s)}`;  // scaled (for curves)
 
   if (params.lobes) {
-    const {
-      shoulder,
-      sideX, sideY,
-      valleyX, valleyY,
-      centerY,
-      midPull,
-      sidePull,
-      valleyPull = 0
-    } = params;
-
-    const lerpPt = ([ax, ay], [bx, by], t) => [
-      ax + (bx - ax) * t,
-      ay + (by - ay) * t
-    ];
-
-    const rs = [sideX, sideY];
-    const rv = [valleyX, valleyY];
-    const c  = [0.5, centerY];
-    const lv = [1 - valleyX, valleyY];
-    const ls = [1 - sideX, sideY];
-
-    const rShoulder = [1, 1 - shoulder];
-    const lShoulder = [0, 1 - shoulder];
-
-    // Horizontal symmetric pulls around each vertex
-    const rsIn  = [rs[0] + sidePull,   rs[1]];
-    const rsOut = [rs[0] - sidePull,   rs[1]];
-
-    const rvIn  = [rv[0] + valleyPull, rv[1]];
-    const rvOut = [rv[0] - valleyPull, rv[1]];
-
-    const cIn   = [c[0] + midPull,     c[1]];
-    const cOut  = [c[0] - midPull,     c[1]];
-
-    const lvIn  = [lv[0] + valleyPull, lv[1]];
-    const lvOut = [lv[0] - valleyPull, lv[1]];
-
-    const lsIn  = [ls[0] + sidePull,   ls[1]];
-    const lsOut = [ls[0] - sidePull,   ls[1]];
-
-    return [
-      `M${p(0, 1)}`,
-      `L${p(1, 1)}`,
-      `L${ps(1, 1)}`,
-      `C${ps(...rShoulder)},${ps(...rsIn)},${ps(...rs)}`,
-      `C${ps(...rsOut)},${ps(...rvIn)},${ps(...rv)}`,
-      `C${ps(...rvOut)},${ps(...cIn)},${ps(...c)}`,
-      `C${ps(...cOut)},${ps(...lvIn)},${ps(...lv)}`,
-      `C${ps(...lvOut)},${ps(...lsIn)},${ps(...ls)}`,
-      `C${ps(...lsOut)},${ps(...lShoulder)},${ps(0, 1)}`,
-      `L${p(0, 1)}`,
-      `Z`
-    ].join(" ");
+    return buildLobedTipPath(p, ps, params);
   } else {
     const { a, b } = params;
     return [
@@ -173,8 +114,27 @@ function updateShape() {
   shapePath.setAttribute("d", buildPath(style, params));
 
   // Update code output
-  const parts = Object.entries(params).map(([k, v]) => `${k} = ${v.toFixed(2)}`);
+  const parts = Object.entries(params).map(([k, v]) => `${k}: ${parseFloat(v.toFixed(2)).toString()}`);
   codeOut.textContent = parts.join(", ");
+}
+
+function labelForStyle(name) {
+  return name
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function buildStyleOptions(selected = "paw") {
+  styleSelect.innerHTML = "";
+
+  for (const name of Object.keys(TIP_PROFILES)) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = labelForStyle(name);
+    if (name === selected) opt.selected = true;
+    styleSelect.appendChild(opt);
+  }
 }
 
 function buildSliders() {
@@ -198,9 +158,15 @@ function buildSliders() {
 
     const input = document.createElement("input");
     input.type = "range";
-    input.min = "0";
-    input.max = "1";
-    input.step = "0.01";
+    if (name === "lobes") {
+      input.min = "0";
+      input.max = "12";
+      input.step = "1";
+    } else {
+      input.min = "0";
+      input.max = "1";
+      input.step = "0.01";
+    }
     input.value = String(val);
 
     input.addEventListener("input", () => {
@@ -224,6 +190,11 @@ function buildSliders() {
     slidersDiv.appendChild(row);
   }
 }
+
+// Init
+buildStyleOptions("paw");
+buildSliders();
+updateShape();
 
 styleSelect.addEventListener("change", () => {
   buildSliders();
@@ -268,10 +239,6 @@ document.getElementById("export-btn").addEventListener("click", () => {
   a.click();
   URL.revokeObjectURL(url);
 });
-
-// Init
-buildSliders();
-updateShape();
 </script>
 </body>
 </html>
