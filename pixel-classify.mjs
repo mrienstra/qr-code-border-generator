@@ -289,7 +289,24 @@ export function computeVertexMap(pixelMap, allPixels, opts) {
         }
       }
 
-      entry.checkerboard = { diagType, owners, bridged, bridgeFillets };
+      // Flag: both owners are L-corners → hole boundaries need arc transitions here
+      const lcTransition = !bridged && owners.every(o => o.isLCorner);
+
+      // Pre-compute arc centers for lcTransition owners.
+      // The arc center for an L-corner is at the diagonally opposite corner of the pixel.
+      if (lcTransition) {
+        for (const owner of owners) {
+          const ci = owner.pixelKey.indexOf(",");
+          const px = Number(owner.pixelKey.slice(0, ci));
+          const py = Number(owner.pixelKey.slice(ci + 1));
+          if (owner.corner === "tl") owner.arcCenter = { x: px + 1, y: py + 1 };
+          else if (owner.corner === "tr") owner.arcCenter = { x: px, y: py + 1 };
+          else if (owner.corner === "br") owner.arcCenter = { x: px, y: py };
+          else if (owner.corner === "bl") owner.arcCenter = { x: px + 1, y: py };
+        }
+      }
+
+      entry.checkerboard = { diagType, owners, bridged, bridgeFillets, lcTransition };
     }
 
     // --- Concave vertex (filled=3): resolved fillet geometry ---

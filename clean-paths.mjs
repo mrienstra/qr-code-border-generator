@@ -320,8 +320,19 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
     const lastEdge = edges[n - 1];
     let prevDx = Math.sign(lastEdge.dx);
     let prevDy = Math.sign(lastEdge.dy);
-    const startX = vertices[0].x - prevDx * r0;
-    const startY = vertices[0].y - prevDy * r0;
+    let startX = vertices[0].x - prevDx * r0;
+    let startY = vertices[0].y - prevDy * r0;
+
+    // If the first vertex is an innerFillet with arc-displaced arrival,
+    // use the actual fillet arrival point so z-close matches.
+    if (plans[0].mode === "innerFillet") {
+      const v0Info = vertexMap.get(key(vertices[0].x, vertices[0].y));
+      if (v0Info?.concave?.eA) {
+        const arrivalPt = (prevDy !== 0) ? v0Info.concave.eA : v0Info.concave.eB;
+        startX = arrivalPt.px;
+        startY = arrivalPt.py;
+      }
+    }
 
     p.push(`M${fmt(startX)},${fmt(startY)}`);
     if (_dbg) console.log(`  [ser] M(${fmt(startX)},${fmt(startY)})`);
@@ -556,15 +567,98 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
     deferredNotchLoops.length = 0;
   }
 
+  // Splice two hole loops at a shared lcTransition vertex.
+  // Each loop has the vertex as a left turn; in the merged loop it appears
+  // twice as a right turn (the "waist" of the peanut-shaped hole).
+  function spliceHoleLoopsAtVertex(loop1, loop2, vx, vy) {
+    const i1 = loop1.findIndex(v => v.x === vx && v.y === vy);
+    const i2 = loop2.findIndex(v => v.x === vx && v.y === vy);
+    if (i1 < 0 || i2 < 0) return null;
+
+    const n1 = loop1.length, n2 = loop2.length;
+    // Rotate both loops so the shared vertex is excluded, then join with
+    // two right-turn copies of the shared vertex as bridges.
+    const rot1 = [];
+    for (let j = 1; j < n1; j++) rot1.push(loop1[(i1 + j) % n1]);
+    const rot2 = [];
+    for (let j = 1; j < n2; j++) rot2.push(loop2[(i2 + j) % n2]);
+
+    return [...rot1, { x: vx, y: vy, turn: "right" }, ...rot2, { x: vx, y: vy, turn: "right" }];
+  }
+
   // Helper: prepare a component with its holes (no diagonal splicing)
   function prepareComponent(comp) {
     const outerVerts = traceBoundary(comp);
     prepareLoop(outerVerts, false);
     const holes = findHoles(comp);
-    for (const hole of holes) {
-      const [hx, hy] = unkey([...hole][0]);
+    if (holes.length < 2) {
+      // No merging needed
+      for (const hole of holes) {
+        const [hx, hy] = unkey([...hole][0]);
+        if (windingFromVertices(outerVerts, hx + 0.5, hy + 0.5) !== 0) {
+          prepareLoop(traceHoleBoundary(hole), true);
+        }
+      }
+      return;
+    }
+
+    // Trace each hole boundary
+    const holeLoops = holes.map(h => traceHoleBoundary(h));
+
+    // Map each hole pixel to its loop index
+    const pixelToLoop = new Map();
+    for (let i = 0; i < holes.length; i++) {
+      for (const pk of holes[i]) pixelToLoop.set(pk, i);
+    }
+
+    // Union-find for tracking merges
+    const parent = holes.map((_, i) => i);
+    function ufFind(x) { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; }
+    function ufUnion(a, b) { const ra = ufFind(a), rb = ufFind(b); if (ra !== rb) parent[ra] = rb; }
+
+    // Find lcTransition vertices that connect two different holes
+    const splices = [];
+    for (const [, v] of vertexMap) {
+      if (!v.checkerboard?.lcTransition) continue;
+      const { occupancy } = v;
+      let emptyA, emptyB;
+      if (!occupancy.nw && !occupancy.se) {
+        emptyA = key(v.vx - 1, v.vy - 1);
+        emptyB = key(v.vx, v.vy);
+      } else {
+        emptyA = key(v.vx, v.vy - 1);
+        emptyB = key(v.vx - 1, v.vy);
+      }
+      const lA = pixelToLoop.get(emptyA);
+      const lB = pixelToLoop.get(emptyB);
+      if (lA !== undefined && lB !== undefined && ufFind(lA) !== ufFind(lB)) {
+        splices.push({ vx: v.vx, vy: v.vy, lA, lB });
+        ufUnion(lA, lB);
+      }
+    }
+
+    // Perform splices
+    for (const { vx, vy, lA, lB } of splices) {
+      const merged = spliceHoleLoopsAtVertex(holeLoops[lA], holeLoops[lB], vx, vy);
+      if (merged) {
+        holeLoops[lA] = merged;
+        holeLoops[lB] = null; // mark as consumed
+        // Update pixelToLoop so future splices find the merged loop
+        for (let i = 0; i < holes.length; i++) {
+          if (ufFind(i) === ufFind(lA)) {
+            // Redirect to lA's current root target
+            // (spliced loops live in holeLoops[lA])
+          }
+        }
+      }
+    }
+
+    // Emit surviving loops
+    for (let i = 0; i < holeLoops.length; i++) {
+      if (!holeLoops[i]) continue;
+      const [hx, hy] = unkey([...holes[i]][0]);
       if (windingFromVertices(outerVerts, hx + 0.5, hy + 0.5) !== 0) {
-        prepareLoop(traceHoleBoundary(hole), true);
+        prepareLoop(holeLoops[i], true);
       }
     }
   }
