@@ -247,6 +247,8 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
         return { radius: rInner, mode: "innerFillet" };
       if (v.checkerboard?.lcTransition)
         return { radius: 0, mode: "lcArcTransition" };
+      if (v.checkerboard?.bridged && rInner > 0)
+        return { radius: rInner, mode: "innerFillet" };
       return { radius: 0, mode: "sharp" };
     }
 
