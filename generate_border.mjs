@@ -142,7 +142,7 @@ export function generate(svgText, {
   connectDiagonalsOrder = "default",
   diagOnly = false,
   tipStyle = "none",
-  tipBase = 0,
+  tipBase,
   jiggle = 0,
   fullLCorners = false,
   skipCheckerLCorners = false,
@@ -153,6 +153,9 @@ export function generate(svgText, {
   wobbleScale = 0,
   noFluff = false,
 } = {}) {
+  const TIP_BASE_DEFAULTS = { "stubby-paw": 0.5 };
+  if (tipBase == null) tipBase = TIP_BASE_DEFAULTS[tipStyle] || 0;
+
   let { squares: qr, qrSize } = parseQr(svgText);
   if (obfuscate) {
     qr = obfuscatePatterns(qr, qrSize, obfuscate.amounts.slice(0, 3), obfuscate.amounts[3], obfuscate.darkOnly);

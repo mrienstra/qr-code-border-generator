@@ -436,6 +436,7 @@
                 <option value="streamlined">Streamlined</option>
                 <option value="paw">Paw</option>
                 <option value="paw-claw">Paw claw</option>
+                <option value="stubby-paw">Stubby paw</option>
               </select>
             </div>
             <div class="field">
@@ -615,6 +616,9 @@
     const tipStyleSelect = document.getElementById("tip-style");
     const tipBaseSlider = document.getElementById("tip-base");
     const tipBaseValue = document.getElementById("tip-base-val");
+    const TIP_BASE_DEFAULTS = {
+      none: 0, pointed: 0, streamlined: 0, paw: 0, "paw-claw": 0, "stubby-paw": 0.5,
+    };
     const jiggleSlider = document.getElementById("jiggle");
     const jiggleValue = document.getElementById("jiggle-value");
     const wobbleFreqSlider = document.getElementById("wobble-freq");
@@ -697,7 +701,7 @@
       nf: "0",
       obf: "0", otl: "0", otr: "0", obl: "0", oal: "0", oeo: "0",
       obd: "0", obt: "rgba(0,0,30,0.1)",
-      rp: "0", rpr: "0.3", rpri: "0.3", flc: "0", cd: "0", cdo: "default", dgo: "0", ts: "none", tb: "0", rj: "0", cp: "0",
+      rp: "0", rpr: "0.3", rpri: "0.3", flc: "0", cd: "0", cdo: "default", dgo: "0", ts: "none", rj: "0", cp: "0",
       wf: "0", wo: "3", ws: "0",
       dbg: "0",
     };
@@ -739,7 +743,7 @@
         cdo: cdOrderSelect.value,
         dgo: diagOnlyCheckbox.checked ? "1" : "0",
         ts: tipStyleSelect.value,
-        tb: tipBaseSlider.value,
+        ...(parseFloat(tipBaseSlider.value) !== (TIP_BASE_DEFAULTS[tipStyleSelect.value] || 0) ? { tb: tipBaseSlider.value } : {}),
         rj: jiggleSlider.value,
         wf: wobbleFreqSlider.value, wo: wobbleOctavesSlider.value, ws: wobbleScaleSlider.value,
         dbg: colorful.checked ? "1" : "0",
@@ -823,7 +827,7 @@
       if (get("cdo") != null) cdOrderSelect.value = get("cdo");
       if (get("dgo") != null) diagOnlyCheckbox.checked = get("dgo") === "1";
       if (get("ts") != null) tipStyleSelect.value = get("ts");
-      if (get("tb") != null) { tipBaseSlider.value = get("tb"); tipBaseValue.textContent = get("tb"); }
+      { const tb = get("tb") != null ? get("tb") : String(TIP_BASE_DEFAULTS[tipStyleSelect.value] || 0); tipBaseSlider.value = tb; tipBaseValue.textContent = tb; }
       if (get("rj") != null) { jiggleSlider.value = get("rj"); jiggleValue.textContent = get("rj"); }
       if (get("wf") != null) { wobbleFreqSlider.value = get("wf"); wobbleFreqValue.textContent = get("wf"); }
       if (get("wo") != null) { wobbleOctavesSlider.value = get("wo"); wobbleOctavesValue.textContent = get("wo"); }
@@ -881,7 +885,7 @@
         connectDiagonalsOrder: cdOrderSelect.value,
         diagOnly: diagOnlyCheckbox.checked,
         tipStyle: tipStyleSelect.value,
-        tipBase: parseFloat(tipBaseSlider.value),
+        ...(parseFloat(tipBaseSlider.value) !== (TIP_BASE_DEFAULTS[tipStyleSelect.value] || 0) ? { tipBase: parseFloat(tipBaseSlider.value) } : {}),
         jiggle: parseFloat(jiggleSlider.value),
         fullLCorners: fullLCornersCheckbox.checked,
         skipCheckerLCorners: skipCheckerLCornersCheckbox.checked,
@@ -1021,7 +1025,12 @@
     });
     cdOrderSelect.addEventListener("change", redraw);
     diagOnlyCheckbox.addEventListener("change", () => redraw());
-    tipStyleSelect.addEventListener("change", redraw);
+    tipStyleSelect.addEventListener("change", () => {
+      const def = TIP_BASE_DEFAULTS[tipStyleSelect.value] || 0;
+      tipBaseSlider.value = String(def);
+      tipBaseValue.textContent = String(def);
+      redraw();
+    });
     tipBaseSlider.addEventListener("input", () => {
       tipBaseValue.textContent = tipBaseSlider.value;
       redraw();

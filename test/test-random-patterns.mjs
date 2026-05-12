@@ -10,6 +10,7 @@
  *   --cd 0,3,5      Comma-separated cd values (default: 0)
  *   --offset N      Skip first N patterns (default: 0, for continuing a batch)
  *   --threshold N   Flag patterns with diff >= N px (default: 200)
+ *   --cell-threshold N  Only log flagged patterns whose worst cell >= N px (default: 30)
  *   --verbose       Show all patterns, not just flagged
  */
 import { execSync } from 'node:child_process';
@@ -28,6 +29,7 @@ const seed = Number(argVal('--seed', '0'));
 const count = Number(argVal('--count', '100'));
 const size = Number(argVal('--size', '5'));
 const threshold = Number(argVal('--threshold', '200'));
+const cellThreshold = Number(argVal('--cell-threshold', '30'));
 const offset = Number(argVal('--offset', '0'));
 const cdValues = argVal('--cd', '0').split(',').map(Number);
 const verbose = rawArgs.includes('--verbose');
@@ -212,7 +214,7 @@ for (let pi = 0; pi < count; ) {
       maxDiffCd = cd;
     }
 
-    if (totalDiff >= threshold) {
+    if (totalDiff >= threshold && maxCell >= cellThreshold) {
       flagged++;
       const isClustered = concentration > 0.3;
       if (isClustered) clustered++;

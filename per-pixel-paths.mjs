@@ -176,18 +176,15 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
       const p  = (u, v) => fmtTipPt(x, y, tipDir, u, v);        // unscaled (walls)
       const ps = (u, v) => fmtTipPt(x, y, tipDir, u, v * s);    // scaled (curves)
 
-      if (tipStyle === "paw" || tipStyle === "paw-claw") {
+      const PAW_PROFILES = {
+        "paw":        { shoulder: 0.48, sideX: 0.84, sideY: 0.14, valleyX: 0.66, valleyY: 0.36, centerY: 0.00, midPull: 0.69, sidePull: 0.68 },
+        "paw-claw":   { shoulder: 0.42, sideX: 0.80, sideY: 0.08, valleyX: 0.66, valleyY: 0.24, centerY: 0.00, midPull: 0.54, sidePull: 0.74 },
+        "stubby-paw": { shoulder: 0.48, sideX: 0.80, sideY: 0.25, valleyX: 0.66, valleyY: 0.54, centerY: 0.00, midPull: 0.69, sidePull: 0.68 },
+      };
+      if (PAW_PROFILES[tipStyle]) {
         // 3-lobe paw/track profile defined in normalized "up" coords.
         // u=0..1 across, v=0 at tip, v=1 at base.
-        const claw = tipStyle === "paw-claw";
-        const shoulder = claw ? 0.42 : 0.48;
-        const sideX    = claw ? 0.80 : 0.84;
-        const sideY    = claw ? 0.08 : 0.14;
-        const valleyX  = claw ? 0.66 : 0.66;
-        const valleyY  = claw ? 0.24 : 0.36;
-        const centerY  = claw ? 0.00 : 0.00;
-        const midPull  = claw ? 0.54 : 0.69;
-        const sidePull = claw ? 0.74 : 0.68;
+        const { shoulder, sideX, sideY, valleyX, valleyY, centerY, midPull, sidePull } = PAW_PROFILES[tipStyle];
 
         const sideOuter = 2 * sideX - sidePull;
 
