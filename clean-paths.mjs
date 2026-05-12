@@ -604,13 +604,13 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
       for (const pk of holes[i]) pixelToLoop.set(pk, i);
     }
 
-    // Union-find for tracking merges
+    // Union-find: tracks which slot holds the merged loop for each hole group.
+    // Roots always point to the slot containing the live loop data.
     const parent = holes.map((_, i) => i);
     function ufFind(x) { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; }
-    function ufUnion(a, b) { const ra = ufFind(a), rb = ufFind(b); if (ra !== rb) parent[ra] = rb; }
 
-    // Find lcTransition vertices that connect two different holes
-    const splices = [];
+    // Find lcTransition vertices and splice connected holes immediately.
+    // Doing discovery+splice in one pass avoids stale-index problems.
     for (const [, v] of vertexMap) {
       if (!v.checkerboard?.lcTransition) continue;
       const { occupancy } = v;
@@ -624,18 +624,14 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
       }
       const lA = pixelToLoop.get(emptyA);
       const lB = pixelToLoop.get(emptyB);
-      if (lA !== undefined && lB !== undefined && ufFind(lA) !== ufFind(lB)) {
-        splices.push({ vx: v.vx, vy: v.vy, lA, lB });
-        ufUnion(lA, lB);
-      }
-    }
-
-    // Perform splices
-    for (const { vx, vy, lA, lB } of splices) {
-      const merged = spliceHoleLoopsAtVertex(holeLoops[lA], holeLoops[lB], vx, vy);
+      if (lA === undefined || lB === undefined) continue;
+      const slotA = ufFind(lA), slotB = ufFind(lB);
+      if (slotA === slotB) continue;
+      const merged = spliceHoleLoopsAtVertex(holeLoops[slotA], holeLoops[slotB], v.vx, v.vy);
       if (merged) {
-        holeLoops[lA] = merged;
-        holeLoops[lB] = null; // mark as consumed
+        holeLoops[slotA] = merged;
+        holeLoops[slotB] = null;
+        parent[slotB] = slotA;
       }
     }
 
