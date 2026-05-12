@@ -4,6 +4,23 @@
 
 import { key, unkey, fmt } from './pixel-paths.mjs';
 
+// Map a normalized (u,v) point in "tip-up" space to actual pixel coords
+// for any tip direction. u runs across (0=left, 1=right), v runs from
+// tip (0) to base (1).
+function mapTipPt(x, y, dir, u, v) {
+  switch (dir) {
+    case "up":    return [x + u,     y + v];
+    case "down":  return [x + 1 - u, y + 1 - v];
+    case "left":  return [x + v,     y + 1 - u];
+    default:      return [x + 1 - v, y + u]; // right
+  }
+}
+
+function fmtTipPt(x, y, dir, u, v) {
+  const [px, py] = mapTipPt(x, y, dir, u, v);
+  return `${fmt(px)},${fmt(py)}`;
+}
+
 export function squaresToPath(squares) {
   const sorted = [...squares].map(unkey).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
   return sorted.map(([x, y]) => {
@@ -155,34 +172,38 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
     // Outer corners: rounded pixel outline
     let path;
     if (tipDir) {
-      // Tip shapes: two cubic Beziers meeting at a cusp (sharp point)
-      // at the center of the exposed edge. Each curve departs the base
-      // corner perpendicular to the base, then sweeps inward to arrive
-      // at the tip with tangent parallel to the base.
-      //
-      // "pointed": aggressive narrowing — inner CPs at ~35% inset from
-      //   the edge, creating a prominent leaf/spear shape.
-      // "streamlined": gentle narrowing — inner CPs at ~15% inset,
-      //   subtle tapering that blends with rounded pixel style.
-      const sharp = tipStyle === "pointed";
-      const a = sharp ? 0.35 : 0.4;   // outer CP distance from tip end
-      const b = sharp ? 0.65 : 0.85;  // inner CP distance from pixel edge
-      if (tipDir === "up") {
-        path = `M${fmt(x)},${fmt(y + 1)}h1`
-          + `C${fmt(x + 1)},${fmt(y + a)},${fmt(x + b)},${fmt(y)},${fmt(x + 0.5)},${fmt(y)}`
-          + `C${fmt(x + 1 - b)},${fmt(y)},${fmt(x)},${fmt(y + a)},${fmt(x)},${fmt(y + 1)}z`;
-      } else if (tipDir === "down") {
-        path = `M${fmt(x + 1)},${fmt(y)}h-1`
-          + `C${fmt(x)},${fmt(y + 1 - a)},${fmt(x + 1 - b)},${fmt(y + 1)},${fmt(x + 0.5)},${fmt(y + 1)}`
-          + `C${fmt(x + b)},${fmt(y + 1)},${fmt(x + 1)},${fmt(y + 1 - a)},${fmt(x + 1)},${fmt(y)}z`;
-      } else if (tipDir === "left") {
-        path = `M${fmt(x + 1)},${fmt(y)}v1`
-          + `C${fmt(x + a)},${fmt(y + 1)},${fmt(x)},${fmt(y + b)},${fmt(x)},${fmt(y + 0.5)}`
-          + `C${fmt(x)},${fmt(y + 1 - b)},${fmt(x + a)},${fmt(y)},${fmt(x + 1)},${fmt(y)}z`;
-      } else { // right
-        path = `M${fmt(x)},${fmt(y + 1)}v-1`
-          + `C${fmt(x + 1 - a)},${fmt(y)},${fmt(x + 1)},${fmt(y + 1 - b)},${fmt(x + 1)},${fmt(y + 0.5)}`
-          + `C${fmt(x + 1)},${fmt(y + b)},${fmt(x + 1 - a)},${fmt(y + 1)},${fmt(x)},${fmt(y + 1)}z`;
+      const p = (u, v) => fmtTipPt(x, y, tipDir, u, v);
+
+      if (tipStyle === "paw" || tipStyle === "paw-claw") {
+        // 3-lobe paw/track profile defined in normalized "up" coords.
+        // u=0..1 across, v=0 at tip, v=1 at base.
+        const claw = tipStyle === "paw-claw";
+        const shoulder = claw ? 0.42 : 0.48;
+        const sideX    = claw ? 0.80 : 0.82;
+        const sideY    = claw ? 0.08 : 0.12;
+        const valleyX  = claw ? 0.66 : 0.64;
+        const valleyY  = claw ? 0.24 : 0.28;
+        const centerY  = claw ? 0.00 : 0.03;
+        const midPull  = claw ? 0.54 : 0.56;
+
+        path =
+          `M${p(0, 1)}L${p(1, 1)}`
+          + `C${p(1, shoulder)},${p(0.92, sideY)},${p(sideX, sideY)}`
+          + `C${p(0.74, sideY)},${p(0.72, valleyY)},${p(valleyX, valleyY)}`
+          + `C${p(0.60, valleyY)},${p(midPull, centerY)},${p(0.5, centerY)}`
+          + `C${p(1 - midPull, centerY)},${p(0.40, valleyY)},${p(1 - valleyX, valleyY)}`
+          + `C${p(0.28, valleyY)},${p(0.26, sideY)},${p(1 - sideX, sideY)}`
+          + `C${p(0.08, sideY)},${p(0, shoulder)},${p(0, 1)}z`;
+      } else {
+        // Leaf/cusp tip styles (pointed, streamlined): two cubic Beziers
+        // meeting at a cusp at the center of the exposed edge.
+        const sharp = tipStyle === "pointed";
+        const a = sharp ? 0.35 : 0.4;
+        const b = sharp ? 0.65 : 0.85;
+
+        path = `M${p(0, 1)}L${p(1, 1)}`
+          + `C${p(1, a)},${p(b, 0)},${p(0.5, 0)}`
+          + `C${p(1 - b, 0)},${p(0, a)},${p(0, 1)}z`;
       }
     } else if (!tl && !tr && !br && !bl) {
       path = `M${fmt(x)},${fmt(y)}h1v1h-1z`;
