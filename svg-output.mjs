@@ -5,7 +5,7 @@
 import { fmt } from "./pixel-paths.mjs";
 
 // --- Circle / layout constants ---
-export const CIRCLE_RATIO = 27 / 33; // default 0.81818
+export const CIRCLE_RATIO = 0.82;
 export const CIRCLE_MARGIN = 3;
 export const CIRCLE_STROKE_WIDTH = 2;
 

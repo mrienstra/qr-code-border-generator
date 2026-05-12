@@ -30,7 +30,52 @@ export function squaresToPath(squares) {
   }).join(" ");
 }
 
-export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagonals = false, diagOnly = false, jiggle = 0, fullLCorners = false, skipCheckerLCorners = false, connectDiagonalsOrder = "default", tipStyle = "none", tipBase = 0) {
+export const TIP_PROFILES = {
+  pointed: {
+    base: 0.15,
+    a: 0.5,
+    b: 0.5,
+  },
+  streamlined: {
+    base: 0,
+    a: 0.4,
+    b: 0.85,
+  },
+  paw: {
+    lobes: 3,
+    base: 0,
+    shoulder: 0.4,
+    sideX: 0.84,
+    sideY: 0.14,
+    valleyX: 0.66,
+    valleyY: 0.36,
+    centerY: 0,
+    midPull: 0.19,
+    sidePull: 0.16,
+    valleyPull: 0,
+  },
+  claw: {
+    lobes: 3, base: 0, shoulder: 0.5, sideX: 0.8, sideY: 0.09, valleyX: 0.66, valleyY: 0.31, centerY: 0, midPull: 0.01, sidePull: 0.01, valleyPull: 0.01
+  },
+  "stubby-paw": {
+    lobes: 3,
+    base: 0.5,
+    shoulder: 0.31,
+    sideX: 0.80,
+    sideY: 0.25,
+    valleyX: 0.66,
+    valleyY: 0.54,
+    centerY: 0,
+    midPull: 0.19,
+    sidePull: 0.12,
+    valleyPull: 0,
+  },
+  "stubby-claw": {
+    lobes: 3, base: 0.5, shoulder: 0.37, sideX: 0.8, sideY: 0.18, valleyX: 0.66, valleyY: 0.61, centerY: 0, midPull: 0.01, sidePull: 0.01, valleyPull: 0.01
+  }
+};
+
+export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagonals = false, diagOnly = false, jiggle = 0, fullLCorners = false, skipCheckerLCorners = false, connectDiagonalsOrder = "default", tipStyle = "none", tipBase = null) {
   const sorted = [...squares].map(unkey).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
   // Outer corner formatting
   const ro = rOuter;
@@ -172,42 +217,70 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
     // Outer corners: rounded pixel outline
     let path;
     if (tipDir) {
-      const s = 1 - tipBase;  // v-scale: compress curves, leaving room for straight walls
-      const p  = (u, v) => fmtTipPt(x, y, tipDir, u, v);        // unscaled (walls)
-      const ps = (u, v) => fmtTipPt(x, y, tipDir, u, v * s);    // scaled (curves)
+      const profile = TIP_PROFILES[tipStyle];
 
-      const PAW_PROFILES = {
-        "paw":        { shoulder: 0.48, sideX: 0.84, sideY: 0.14, valleyX: 0.66, valleyY: 0.36, centerY: 0.00, midPull: 0.69, sidePull: 0.68 },
-        "paw-claw":   { shoulder: 0.42, sideX: 0.80, sideY: 0.08, valleyX: 0.66, valleyY: 0.24, centerY: 0.00, midPull: 0.54, sidePull: 0.74 },
-        "stubby-paw": { shoulder: 0.48, sideX: 0.80, sideY: 0.25, valleyX: 0.66, valleyY: 0.54, centerY: 0.00, midPull: 0.69, sidePull: 0.68 },
-      };
-      if (PAW_PROFILES[tipStyle]) {
-        // 3-lobe paw/track profile defined in normalized "up" coords.
-        // u=0..1 across, v=0 at tip, v=1 at base.
-        const { shoulder, sideX, sideY, valleyX, valleyY, centerY, midPull, sidePull } = PAW_PROFILES[tipStyle];
+      if (profile) {
+        const base = tipBase ?? profile?.base ?? 0;
+        const s = 1 - base;
+        const p = (u, v) => fmtTipPt(x, y, tipDir, u, v);
+        const ps = (u, v) => p(u, v * s);
 
-        const sideOuter = 2 * sideX - sidePull;
+        if ("lobes" in profile) {
+          const {
+            shoulder,
+            sideX, sideY,
+            valleyX, valleyY,
+            centerY,
+            midPull,
+            sidePull,
+            valleyPull = 0,
+          } = profile;
 
-        path =
-          `M${p(0, 1)}L${p(1, 1)}L${ps(1, 1)}`
-          + `C${ps(1, shoulder)},${ps(sideOuter, sideY)},${ps(sideX, sideY)}`
-          + `C${ps(sidePull, sideY)},${ps(sidePull - 0.02, valleyY)},${ps(valleyX, valleyY)}`
-          + `C${ps(valleyX, valleyY)},${ps(midPull, centerY)},${ps(0.5, centerY)}`
-          + `C${ps(1 - midPull, centerY)},${ps(1 - valleyX, valleyY)},${ps(1 - valleyX, valleyY)}`
-          + `C${ps(1 - sidePull + 0.02, valleyY)},${ps(1 - sidePull, sideY)},${ps(1 - sideX, sideY)}`
-          + `C${ps(1 - sideOuter, sideY)},${ps(0, shoulder)},${ps(0, 1)}`
-          + `L${p(0, 1)}z`;
-      } else {
-        // Leaf/cusp tip styles (pointed, streamlined): two cubic Beziers
-        // meeting at a cusp at the center of the exposed edge.
-        const sharp = tipStyle === "pointed";
-        const a = sharp ? 0.35 : 0.4;
-        const b = sharp ? 0.65 : 0.85;
+          const rs = [sideX, sideY];
+          const rv = [valleyX, valleyY];
+          const c  = [0.5, centerY];
+          const lv = [1 - valleyX, valleyY];
+          const ls = [1 - sideX, sideY];
 
-        path = `M${p(0, 1)}L${p(1, 1)}L${ps(1, 1)}`
-          + `C${ps(1, a)},${ps(b, 0)},${ps(0.5, 0)}`
-          + `C${ps(1 - b, 0)},${ps(0, a)},${ps(0, 1)}`
-          + `L${p(0, 1)}z`;
+          const rShoulder = [1, 1 - shoulder];
+          const lShoulder = [0, 1 - shoulder];
+
+          const rsIn  = [rs[0] + sidePull,   rs[1]];
+          const rsOut = [rs[0] - sidePull,   rs[1]];
+
+          const rvIn  = [rv[0] + valleyPull, rv[1]];
+          const rvOut = [rv[0] - valleyPull, rv[1]];
+
+          const cIn   = [c[0] + midPull,     c[1]];
+          const cOut  = [c[0] - midPull,     c[1]];
+
+          const lvIn  = [lv[0] + valleyPull, lv[1]];
+          const lvOut = [lv[0] - valleyPull, lv[1]];
+
+          const lsIn  = [ls[0] + sidePull,   ls[1]];
+          const lsOut = [ls[0] - sidePull,   ls[1]];
+
+          path = [
+            `M${p(0, 1)}`,
+            `L${p(1, 1)}`,
+            `L${ps(1, 1)}`,
+            `C${ps(...rShoulder)},${ps(...rsIn)},${ps(...rs)}`,
+            `C${ps(...rsOut)},${ps(...rvIn)},${ps(...rv)}`,
+            `C${ps(...rvOut)},${ps(...cIn)},${ps(...c)}`,
+            `C${ps(...cOut)},${ps(...lvIn)},${ps(...lv)}`,
+            `C${ps(...lvOut)},${ps(...lsIn)},${ps(...ls)}`,
+            `C${ps(...lsOut)},${ps(...lShoulder)},${ps(0, 1)}`,
+            `L${p(0, 1)}z`,
+          ].join("");
+        } else {
+          const { a, b } = profile;
+
+          path =
+            `M${p(0, 1)}L${p(1, 1)}L${ps(1, 1)}`
+            + `C${ps(1, a)},${ps(b, 0)},${ps(0.5, 0)}`
+            + `C${ps(1 - b, 0)},${ps(0, a)},${ps(0, 1)}`
+            + `L${p(0, 1)}z`;
+        }
       }
     } else if (!tl && !tr && !br && !bl) {
       path = `M${fmt(x)},${fmt(y)}h1v1h-1z`;

@@ -435,8 +435,9 @@
                 <option value="pointed">Pointed</option>
                 <option value="streamlined">Streamlined</option>
                 <option value="paw">Paw</option>
-                <option value="paw-claw">Paw claw</option>
+                <option value="claw">Claw</option>
                 <option value="stubby-paw">Stubby paw</option>
+                <option value="stubby-claw">Stubby claw</option>
               </select>
             </div>
             <div class="field">
@@ -530,6 +531,7 @@
   <script src="qrcodegen.js"></script>
   <script type="module">
     import { generate, parseQr, computeLayout, getAlignmentPositions } from "./generate_border.mjs";
+    import { TIP_PROFILES } from "./per-pixel-paths.mjs";
 
     const QrCode = qrcodegen.QrCode;
     const QrSegment = qrcodegen.QrSegment;
@@ -617,7 +619,51 @@
     const tipBaseSlider = document.getElementById("tip-base");
     const tipBaseValue = document.getElementById("tip-base-val");
     const TIP_BASE_DEFAULTS = {
-      none: 0, pointed: 0, streamlined: 0, paw: 0, "paw-claw": 0, "stubby-paw": 0.5,
+      none: 0,
+      ...Object.fromEntries(
+        Object.entries(TIP_PROFILES).map(([name, profile]) => [
+          name,
+          typeof profile?.base === "number" ? profile.base : 0,
+        ])
+      ),
+    };
+    // Defaults matching generate()'s parameter defaults — used to build sparse repro JSON
+    const GENERATE_DEFAULTS = {
+      colorful: false,
+      circleRatio: 0.82,
+      strokeWidth: 2,
+      bgColor: "#ffffff",
+      bgShape: "circle",
+      fgColor: "#000000",
+      borderColor: "#000000",
+      borderShape: "circle",
+      cornerRadius: 0,
+      border2Color: null,
+      border2Width: 4,
+      border2Offset: 0,
+      border2Trim: false,
+      snapRadius: false,
+      shuffle: false,
+      gap: 1,
+      flankGap: 1,
+      randAlign: true,
+      randFluff: false,
+      obfuscate: null,
+      roundedPixels: 0,
+      roundedInner: 0,
+      connectDiagonals: 0,
+      connectDiagonalsOrder: "default",
+      diagOnly: false,
+      tipStyle: "none",
+      jiggle: 0,
+      fullLCorners: false,
+      skipCheckerLCorners: false,
+      contourMode: false,
+      cleanPathMode: false,
+      wobbleFreq: 0,
+      wobbleOctaves: 3,
+      wobbleScale: 0,
+      noFluff: false,
     };
     const jiggleSlider = document.getElementById("jiggle");
     const jiggleValue = document.getElementById("jiggle-value");
@@ -701,7 +747,7 @@
       nf: "0",
       obf: "0", otl: "0", otr: "0", obl: "0", oal: "0", oeo: "0",
       obd: "0", obt: "rgba(0,0,30,0.1)",
-      rp: "0", rpr: "0.3", rpri: "0.3", flc: "0", cd: "0", cdo: "default", dgo: "0", ts: "none", rj: "0", cp: "0",
+      rp: "0", rpr: "0.3", rpri: "0.3", flc: "0", scl: "0", ct: "0", cd: "0", cdo: "default", dgo: "0", ts: "none", rj: "0", cp: "0",
       wf: "0", wo: "3", ws: "0",
       dbg: "0",
     };
@@ -885,7 +931,7 @@
         connectDiagonalsOrder: cdOrderSelect.value,
         diagOnly: diagOnlyCheckbox.checked,
         tipStyle: tipStyleSelect.value,
-        ...(parseFloat(tipBaseSlider.value) !== (TIP_BASE_DEFAULTS[tipStyleSelect.value] || 0) ? { tipBase: parseFloat(tipBaseSlider.value) } : {}),
+        tipBase: parseFloat(tipBaseSlider.value),
         jiggle: parseFloat(jiggleSlider.value),
         fullLCorners: fullLCornersCheckbox.checked,
         skipCheckerLCorners: skipCheckerLCornersCheckbox.checked,
@@ -896,7 +942,14 @@
         wobbleScale: parseFloat(wobbleScaleSlider.value),
         noFluff: noFluffCheckbox.checked,
       };
-      window._lastGenerateInputs = { svgText, options };
+      // Build sparse repro options (omit values matching generate()'s defaults)
+      const effectiveDefaults = { ...GENERATE_DEFAULTS, tipBase: TIP_BASE_DEFAULTS[options.tipStyle] || 0 };
+      const reproOptions = {};
+      for (const [k, v] of Object.entries(options)) {
+        if (v !== null && typeof v === "object") { reproOptions[k] = v; continue; }
+        if (v !== effectiveDefaults[k]) reproOptions[k] = v;
+      }
+      window._lastGenerateInputs = { svgText, options: reproOptions };
       const result = generate(svgText, options);
 
       currentOutputSvg = result;
