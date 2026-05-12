@@ -10,12 +10,12 @@
 import { key, unkey, snap, fmt } from './pixel-paths.mjs';
 import { classifyPixels, computeVertexMap } from './pixel-classify.mjs';
 
-export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDiagonals = 0, fullLCorners = false, skipCheckerLCorners = false) {
+export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDiagonals = 0, fullLCorners = false, skipCheckerLCorners = false, connectDiagonalsOrder = "default") {
   if (squares.size === 0) return { path: "", fillets: "" };
 
   // --- Pixel classification (authoritative source of truth) ---
   const pixelMap = classifyPixels(squares, allPixels, {
-    ro: rOuter, ri: rInner, connectDiagonals, fullLCorners, skipCheckerLCorners,
+    ro: rOuter, ri: rInner, connectDiagonals, connectDiagonalsOrder, fullLCorners, skipCheckerLCorners,
   });
 
   // --- Vertex map (pre-computed geometry for every grid vertex) ---

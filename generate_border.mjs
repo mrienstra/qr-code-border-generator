@@ -139,6 +139,7 @@ export function generate(svgText, {
   roundedPixels = 0,
   roundedInner = 0,
   connectDiagonals = 0,
+  connectDiagonalsOrder = "default",
   diagOnly = false,
   jiggle = 0,
   fullLCorners = false,
@@ -343,11 +344,11 @@ export function generate(svgText, {
       for (const [, squares] of group)
         for (const k of squares) allPixels.add(k);
     if (useCleanPath) {
-      toPath = (sq) => squaresToCleanPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, fullLCorners, skipCheckerLCorners);
+      toPath = (sq) => squaresToCleanPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, fullLCorners, skipCheckerLCorners, connectDiagonalsOrder);
     } else if (useContour) {
       toPath = (sq) => squaresToContourPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, fullLCorners, skipCheckerLCorners);
     } else {
-      toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, diagOnly, jiggle, fullLCorners, skipCheckerLCorners);
+      toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, diagOnly, jiggle, fullLCorners, skipCheckerLCorners, connectDiagonalsOrder);
     }
 
     // Diagnostic: check for adjacency mismatches (floating-point key issues)

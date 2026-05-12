@@ -13,7 +13,7 @@ export function squaresToPath(squares) {
   }).join(" ");
 }
 
-export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagonals = false, diagOnly = false, jiggle = 0, fullLCorners = false, skipCheckerLCorners = false) {
+export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagonals = false, diagOnly = false, jiggle = 0, fullLCorners = false, skipCheckerLCorners = false, connectDiagonalsOrder = "default") {
   const sorted = [...squares].map(unkey).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
   // Outer corner formatting
   const ro = rOuter;
@@ -78,7 +78,18 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
       const tFloor = Math.floor(threshold);
       const frac = threshold - tFloor;
       function shouldConnect(remOther, vx, vy) {
+        if (connectDiagonalsOrder === "random") {
+          const h = ((vx * 2654435761 + vy * 2246822519) >>> 0) % 20;
+          return h < connectDiagonals * 4;
+        }
         const sum = remCurrent + remOther;
+        if (connectDiagonalsOrder === "reverse") {
+          if (sum >= (4 - tFloor)) return true;
+          if (frac > 0 && sum === (4 - tFloor) - 1) {
+            return ((vx * 3 + vy * 7) % 4) < (frac * 4);
+          }
+          return false;
+        }
         if (sum <= tFloor) return true;
         if (frac > 0 && sum === tFloor + 1) {
           return ((vx * 3 + vy * 7) % 4) < (frac * 4);

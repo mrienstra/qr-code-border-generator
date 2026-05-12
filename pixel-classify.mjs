@@ -21,12 +21,13 @@ import { key, fmt } from './pixel-paths.mjs';
  * @param {number} opts.ro - outer corner radius (0-0.5)
  * @param {number} opts.ri - inner fillet radius (0-0.5)
  * @param {number} opts.connectDiagonals - 0-5, diagonal bridging aggressiveness
+ * @param {string} opts.connectDiagonalsOrder - "default"|"reverse"|"random"
  * @param {boolean} opts.fullLCorners - enable full-radius (r=1.0) L-corners
  * @param {boolean} opts.skipCheckerLCorners - suppress L-corners at checkerboard vertices
  * @returns {Map<string, PixelAppearance>}
  */
 export function classifyPixels(squares, allPixels, opts) {
-  const { ro, ri, connectDiagonals = 0, fullLCorners = false, skipCheckerLCorners = false } = opts;
+  const { ro, ri, connectDiagonals = 0, connectDiagonalsOrder = "default", fullLCorners = false, skipCheckerLCorners = false } = opts;
   const map = new Map();
 
   for (const k of squares) {
@@ -53,7 +54,18 @@ export function classifyPixels(squares, allPixels, opts) {
       const tFloor = Math.floor(threshold);
       const frac = threshold - tFloor;
       function shouldConnect(remOther, vx, vy) {
+        if (connectDiagonalsOrder === "random") {
+          const h = ((vx * 2654435761 + vy * 2246822519) >>> 0) % 20;
+          return h < connectDiagonals * 4;
+        }
         const sum = remCurrent + remOther;
+        if (connectDiagonalsOrder === "reverse") {
+          if (sum >= (4 - tFloor)) return true;
+          if (frac > 0 && sum === (4 - tFloor) - 1) {
+            return ((vx * 3 + vy * 7) % 4) < (frac * 4);
+          }
+          return false;
+        }
         if (sum <= tFloor) return true;
         if (frac > 0 && sum === tFloor + 1) {
           return ((vx * 3 + vy * 7) % 4) < (frac * 4);

@@ -31,11 +31,12 @@ const allPixels = new Set(pixelKeys);
 
 const ro = opts.roundedPixels, ri = opts.roundedInner;
 const cd = opts.connectDiagonals, flc = opts.fullLCorners, scl = opts.skipCheckerLCorners;
+const cdo = opts.connectDiagonalsOrder || "default";
 console.log(`Fixture: ${fixturePath}`);
-console.log(`Config: ro=${ro} ri=${ri} cd=${cd} flc=${flc} scl=${scl} viewBox=${vw}x${vh} pixels=${pixelKeys.length}`);
+console.log(`Config: ro=${ro} ri=${ri} cd=${cd} cdo=${cdo} flc=${flc} scl=${scl} viewBox=${vw}x${vh} pixels=${pixelKeys.length}`);
 
-const cp = squaresToCleanPath(allPixels, allPixels, ro, ri, cd, flc, scl);
-const pp = squaresToRoundedPath(pixelKeys, allPixels, ro, ri, cd, false, 0, flc, scl);
+const cp = squaresToCleanPath(allPixels, allPixels, ro, ri, cd, flc, scl, cdo);
+const pp = squaresToRoundedPath(pixelKeys, allPixels, ro, ri, cd, false, 0, flc, scl, cdo);
 
 function makeSvg(result) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${vw} ${vh}" width="${vw + 0.2}">
