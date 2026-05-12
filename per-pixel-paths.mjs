@@ -185,14 +185,15 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
         const valleyY  = claw ? 0.24 : 0.28;
         const centerY  = claw ? 0.00 : 0.03;
         const midPull  = claw ? 0.54 : 0.56;
+        const sidePull = claw ? 0.74 : 0.74;
 
         path =
           `M${p(0, 1)}L${p(1, 1)}`
           + `C${p(1, shoulder)},${p(0.92, sideY)},${p(sideX, sideY)}`
-          + `C${p(0.74, sideY)},${p(0.72, valleyY)},${p(valleyX, valleyY)}`
+          + `C${p(sidePull, sideY)},${p(sidePull - 0.02, valleyY)},${p(valleyX, valleyY)}`
           + `C${p(0.60, valleyY)},${p(midPull, centerY)},${p(0.5, centerY)}`
           + `C${p(1 - midPull, centerY)},${p(0.40, valleyY)},${p(1 - valleyX, valleyY)}`
-          + `C${p(0.28, valleyY)},${p(0.26, sideY)},${p(1 - sideX, sideY)}`
+          + `C${p(1 - sidePull + 0.02, valleyY)},${p(1 - sidePull, sideY)},${p(1 - sideX, sideY)}`
           + `C${p(0.08, sideY)},${p(0, shoulder)},${p(0, 1)}z`;
       } else {
         // Leaf/cusp tip styles (pointed, streamlined): two cubic Beziers

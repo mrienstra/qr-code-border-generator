@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tip Profile Editor</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font: 14px/1.4 system-ui, sans-serif; background: #f5f5f5; padding: 20px; }
+  h1 { font-size: 18px; margin-bottom: 12px; }
+  .top { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
+  .top select { font: inherit; padding: 4px 8px; }
+  .top button { font: inherit; padding: 4px 12px; cursor: pointer; }
+  .main { display: flex; gap: 24px; align-items: flex-start; }
+  .canvas-wrap { flex-shrink: 0; }
+  .canvas-wrap svg { background: white; border: 1px solid #ccc; border-radius: 4px; }
+  .sliders { min-width: 260px; }
+  .slider-row { margin-bottom: 8px; }
+  .slider-row label { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 2px; }
+  .slider-row label .val { font-family: monospace; color: #666; }
+  .slider-row input[type=range] { width: 100%; }
+  .code-out { margin-top: 16px; font: 12px/1.5 monospace; background: #fff; border: 1px solid #ccc;
+    border-radius: 4px; padding: 8px; white-space: pre-wrap; word-break: break-all; min-height: 40px; }
+  .copied { color: #2a2; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<h1>Tip Profile Editor</h1>
+
+<div class="top">
+  <select id="style-select">
+    <option value="pointed">Pointed</option>
+    <option value="streamlined">Streamlined</option>
+    <option value="paw" selected>Paw</option>
+    <option value="paw-claw">Paw claw</option>
+  </select>
+  <button id="copy-btn">Copy constants</button>
+  <span id="copy-msg"></span>
+</div>
+
+<div class="main">
+  <div class="canvas-wrap">
+    <svg id="canvas" viewBox="-0.12 -0.12 1.24 1.24" width="500" height="500">
+      <!-- grid -->
+      <g id="grid"></g>
+      <!-- module box -->
+      <rect x="0" y="0" width="1" height="1" fill="none" stroke="#bbb" stroke-width="0.006"/>
+      <!-- tip shape -->
+      <path id="shape" fill="rgba(0,0,0,0.12)" stroke="#000" stroke-width="0.008" stroke-linejoin="round"/>
+    </svg>
+  </div>
+  <div class="sliders" id="sliders"></div>
+</div>
+
+<div class="code-out" id="code-out"></div>
+
+<script>
+const PROFILES = {
+  pointed:      { a: 0.35, b: 0.65 },
+  streamlined:  { a: 0.4,  b: 0.85 },
+  paw:          { shoulder: 0.48, sideX: 0.82, sideY: 0.12, valleyX: 0.64, valleyY: 0.28, centerY: 0.03, midPull: 0.56, sidePull: 0.74 },
+  "paw-claw":   { shoulder: 0.42, sideX: 0.80, sideY: 0.08, valleyX: 0.66, valleyY: 0.24, centerY: 0.00, midPull: 0.54, sidePull: 0.74 },
+};
+
+// Deep-copy defaults so we can reset
+const DEFAULTS = JSON.parse(JSON.stringify(PROFILES));
+
+const styleSelect = document.getElementById("style-select");
+const slidersDiv = document.getElementById("sliders");
+const shapePath = document.getElementById("shape");
+const codeOut = document.getElementById("code-out");
+const copyBtn = document.getElementById("copy-btn");
+const copyMsg = document.getElementById("copy-msg");
+
+// Build grid lines
+{
+  const g = document.getElementById("grid");
+  let d = "";
+  for (let i = 0; i <= 10; i++) {
+    const v = i / 10;
+    d += `M${v},-0.1V1.1 M-0.1,${v}H1.1 `;
+  }
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", d);
+  path.setAttribute("stroke", "#e8e8e8");
+  path.setAttribute("stroke-width", "0.003");
+  path.setAttribute("fill", "none");
+  g.appendChild(path);
+}
+
+function buildPath(style, params) {
+  const f = v => {
+    if (v === Math.round(v)) return String(Math.round(v));
+    return v.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+  };
+  const p = (u, v) => `${f(u)},${f(v)}`;
+
+  if (style === "paw" || style === "paw-claw") {
+    const { shoulder, sideX, sideY, valleyX, valleyY, centerY, midPull, sidePull } = params;
+    return [
+      `M${p(0, 1)}`,
+      `L${p(1, 1)}`,
+      `C${p(1, shoulder)},${p(0.92, sideY)},${p(sideX, sideY)}`,
+      `C${p(sidePull, sideY)},${p(sidePull - 0.02, valleyY)},${p(valleyX, valleyY)}`,
+      `C${p(0.60, valleyY)},${p(midPull, centerY)},${p(0.5, centerY)}`,
+      `C${p(1 - midPull, centerY)},${p(0.40, valleyY)},${p(1 - valleyX, valleyY)}`,
+      `C${p(1 - sidePull + 0.02, valleyY)},${p(1 - sidePull, sideY)},${p(1 - sideX, sideY)}`,
+      `C${p(0.08, sideY)},${p(0, shoulder)},${p(0, 1)}`,
+      `Z`
+    ].join(" ");
+  } else {
+    const { a, b } = params;
+    return [
+      `M${p(0, 1)}`,
+      `L${p(1, 1)}`,
+      `C${p(1, a)},${p(b, 0)},${p(0.5, 0)}`,
+      `C${p(1 - b, 0)},${p(0, a)},${p(0, 1)}`,
+      `Z`
+    ].join(" ");
+  }
+}
+
+function currentStyle() { return styleSelect.value; }
+function currentParams() { return PROFILES[currentStyle()]; }
+
+function updateShape() {
+  const style = currentStyle();
+  const params = currentParams();
+  shapePath.setAttribute("d", buildPath(style, params));
+
+  // Update code output
+  const parts = Object.entries(params).map(([k, v]) => `${k} = ${v.toFixed(2)}`);
+  codeOut.textContent = parts.join(", ");
+}
+
+function buildSliders() {
+  slidersDiv.innerHTML = "";
+  const style = currentStyle();
+  const params = currentParams();
+  const defaults = DEFAULTS[style];
+
+  for (const [name, val] of Object.entries(params)) {
+    const row = document.createElement("div");
+    row.className = "slider-row";
+
+    const label = document.createElement("label");
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = name;
+    const valSpan = document.createElement("span");
+    valSpan.className = "val";
+    valSpan.textContent = val.toFixed(2);
+    label.appendChild(nameSpan);
+    label.appendChild(valSpan);
+
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = "0";
+    input.max = "1";
+    input.step = "0.01";
+    input.value = String(val);
+
+    input.addEventListener("input", () => {
+      const v = parseFloat(input.value);
+      params[name] = v;
+      valSpan.textContent = v.toFixed(2);
+      updateShape();
+    });
+
+    // Double-click to reset to default
+    input.addEventListener("dblclick", () => {
+      const v = defaults[name];
+      input.value = String(v);
+      params[name] = v;
+      valSpan.textContent = v.toFixed(2);
+      updateShape();
+    });
+
+    row.appendChild(label);
+    row.appendChild(input);
+    slidersDiv.appendChild(row);
+  }
+}
+
+styleSelect.addEventListener("change", () => {
+  buildSliders();
+  updateShape();
+});
+
+copyBtn.addEventListener("click", () => {
+  const params = currentParams();
+  const parts = Object.entries(params).map(([k, v]) => `${k} = ${v.toFixed(2)}`);
+  const text = parts.join(", ");
+  navigator.clipboard.writeText(text).then(() => {
+    copyMsg.textContent = "Copied!";
+    copyMsg.className = "copied";
+    setTimeout(() => { copyMsg.textContent = ""; }, 1500);
+  });
+});
+
+// Init
+buildSliders();
+updateShape();
+</script>
+</body>
+</html>
