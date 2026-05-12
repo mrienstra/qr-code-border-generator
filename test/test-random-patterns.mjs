@@ -8,10 +8,12 @@
  *   --count N       Patterns per batch (default: 100)
  *   --size N        Grid size (default: 5)
  *   --cd 0,3,5      Comma-separated cd values (default: 0)
+ *   --offset N      Skip first N patterns (default: 0, for continuing a batch)
  *   --threshold N   Flag patterns with diff >= N px (default: 200)
  *   --verbose       Show all patterns, not just flagged
  */
 import { execSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import { squaresToCleanPath } from '../clean-paths.mjs';
 import { squaresToRoundedPath } from '../per-pixel-paths.mjs';
 import { classifyPixels } from '../pixel-classify.mjs';
@@ -26,6 +28,7 @@ const seed = Number(argVal('--seed', '0'));
 const count = Number(argVal('--count', '100'));
 const size = Number(argVal('--size', '5'));
 const threshold = Number(argVal('--threshold', '200'));
+const offset = Number(argVal('--offset', '0'));
 const cdValues = argVal('--cd', '0').split(',').map(Number);
 const verbose = rawArgs.includes('--verbose');
 
@@ -82,10 +85,15 @@ function makeSvg(result) {
 }
 
 function computeDiff(cpSvg, ppSvg) {
+  // Write PNGs to temp files to avoid pipe deadlock: magick with both
+  // stdin input (~50KB PNG) and stdout output (~900KB RGBA) can deadlock
+  // when the pipe buffer (64KB on macOS) fills before stdin is consumed.
   const cpPng = execSync(`rsvg-convert -w ${pxW} -h ${pxH}`, { input: Buffer.from(cpSvg) });
   const ppPng = execSync(`rsvg-convert -w ${pxW} -h ${pxH}`, { input: Buffer.from(ppSvg) });
-  const cpRaw = execSync('magick png:- -depth 8 rgba:-', { input: cpPng, maxBuffer: 50 * 1024 * 1024 });
-  const ppRaw = execSync('magick png:- -depth 8 rgba:-', { input: ppPng, maxBuffer: 50 * 1024 * 1024 });
+  writeFileSync('/tmp/_rp_cp.png', cpPng);
+  writeFileSync('/tmp/_rp_pp.png', ppPng);
+  const cpRaw = execSync('magick /tmp/_rp_cp.png -depth 8 rgba:-', { maxBuffer: 50 * 1024 * 1024 });
+  const ppRaw = execSync('magick /tmp/_rp_pp.png -depth 8 rgba:-', { maxBuffer: 50 * 1024 * 1024 });
 
   let totalDiff = 0;
   const cellDiffs = new Array(w * h).fill(0);
@@ -131,16 +139,25 @@ function silenced(fn) {
 }
 
 // --- Main ---
-origLog(`Seed: ${seed}  Count: ${count}  Size: ${size}  cd: ${cdValues.join(',')}  Threshold: ${threshold}px\n`);
+origLog(`Seed: ${seed}  Count: ${count}  Size: ${size}  cd: ${cdValues.join(',')}  Threshold: ${threshold}px  Offset: ${offset}\n`);
 
 let totalRuns = 0, passed = 0, flagged = 0, clustered = 0, errors = 0, skipped = 0;
 let maxDiffSeen = 0, maxDiffPattern = '', maxDiffCd = 0;
 const seen = new Set();
-let generated = 0;
+
+// Fast-forward past `offset` valid patterns (consumes PRNG deterministically)
+for (let skip = 0; skip < offset; ) {
+  const pat = randomPattern();
+  if (seen.has(pat)) continue;
+  seen.add(pat);
+  const { allPixels } = parsePattern(pat);
+  const n = size * size;
+  if (allPixels.size < 3 || allPixels.size > n - 3) continue;
+  skip++;
+}
 
 for (let pi = 0; pi < count; ) {
   const pat = randomPattern();
-  generated++;
 
   // Skip duplicates and trivial patterns
   if (seen.has(pat)) continue;
@@ -203,7 +220,7 @@ for (let pi = 0; pi < count; ) {
       const tag = isClustered ? '  CLUSTERED' : '';
       origLog(`#${pi}: ${pat}  cd=${cd}  Diff: ${totalDiff}px (${pct}%)${tag}`);
       origLog(`  Max cell: ${maxCell}px (${(concentration * 100).toFixed(0)}% of total) at (${maxCx},${maxCy})`);
-      origLog(formatCellGrid(cellDiffs));
+      // origLog(formatCellGrid(cellDiffs));
       origLog();
     } else {
       passed++;
@@ -213,7 +230,7 @@ for (let pi = 0; pi < count; ) {
 }
 
 origLog(`--- Summary ---`);
-origLog(`Tested: ${totalRuns} runs (${seen.size} patterns, ${skipped} cd-skipped)`);
+origLog(`Tested: ${totalRuns} runs (patterns ${offset}–${offset + count - 1}, ${skipped} cd-skipped)`);
 origLog(`Passed (<${threshold}px): ${passed}`);
 origLog(`Flagged (>=${threshold}px): ${flagged}  (clustered: ${clustered})`);
 if (errors > 0) origLog(`Errors: ${errors}`);
