@@ -67,7 +67,7 @@
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--fg); }
-    .container { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+    .container { margin: 0 auto; padding: 1.5rem; }
     h1 { text-align: center; margin-bottom: 1.5rem; font-size: 1.5rem; }
     .header { display: flex; justify-content: center; align-items: center; margin-bottom: 1.5rem; gap: 0.75rem; }
     .header h1 { margin-bottom: 0; }
@@ -114,14 +114,14 @@
     .checkbox-row label { font-size: 0.85rem; cursor: pointer; }
 
     #preview-svg {
-      width: 100%; max-width: 500px; aspect-ratio: 1;
-      background: var(--preview-bg); border-radius: 8px; padding: 1rem;
+      width: 100%; aspect-ratio: 1;
+      background: var(--preview-bg); border-radius: 8px;
     }
     #preview-svg svg { width: 100%; height: 100%; }
 
     .stats { font-size: 0.8rem; color: var(--heading-muted); margin-top: 0.5rem; text-align: center; }
 
-    .btn-row { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+    .btn-row { display: flex; gap: 0.5rem; margin: 1rem 0; }
     .btn {
       flex: 1; padding: 0.5rem; border: none; border-radius: 4px; cursor: pointer;
       font-size: 0.85rem; font-weight: 500;
@@ -137,8 +137,20 @@
     .file-upload input[type=file] { width: 100%; font-size: 0.85rem; }
 
     @media (max-width: 760px) {
-      .layout { flex-direction: column; }
-      .controls { flex: none; }
+      .container {
+        display: flex; flex-direction: column;
+        height: 100dvh; overflow: hidden; padding-bottom: 0;
+      }
+      .header { flex-shrink: 0; }
+      .layout {
+        flex-direction: column; flex: 1; min-height: 0;
+      }
+      .preview { order: -1; flex: initial; }
+      #preview-svg { width: min(100%, 35dvh); margin: 0 auto; }
+      .controls {
+        flex: 1 1 0; min-height: 0; overflow-y: auto;
+        max-height: none; position: static;
+      }
     }
   </style>
 </head>
@@ -427,6 +439,13 @@
               </select>
             </div>
             <div class="field">
+              <label>Tip base</label>
+              <div class="field-row">
+                <input type="range" id="tip-base" min="0" max="0.9" step="0.05" value="0">
+                <output id="tip-base-val">0</output>
+              </div>
+            </div>
+            <div class="field">
               <label>Jiggle</label>
               <div class="field-row">
                 <input type="range" id="jiggle" min="0" max="1" step="0.01" value="0">
@@ -594,6 +613,8 @@
     const cdOrderSelect = document.getElementById("cd-order");
     const diagOnlyCheckbox = document.getElementById("diag-only");
     const tipStyleSelect = document.getElementById("tip-style");
+    const tipBaseSlider = document.getElementById("tip-base");
+    const tipBaseValue = document.getElementById("tip-base-val");
     const jiggleSlider = document.getElementById("jiggle");
     const jiggleValue = document.getElementById("jiggle-value");
     const wobbleFreqSlider = document.getElementById("wobble-freq");
@@ -676,7 +697,7 @@
       nf: "0",
       obf: "0", otl: "0", otr: "0", obl: "0", oal: "0", oeo: "0",
       obd: "0", obt: "rgba(0,0,30,0.1)",
-      rp: "0", rpr: "0.3", rpri: "0.3", flc: "0", cd: "0", cdo: "default", dgo: "0", ts: "none", rj: "0", cp: "0",
+      rp: "0", rpr: "0.3", rpri: "0.3", flc: "0", cd: "0", cdo: "default", dgo: "0", ts: "none", tb: "0", rj: "0", cp: "0",
       wf: "0", wo: "3", ws: "0",
       dbg: "0",
     };
@@ -718,6 +739,7 @@
         cdo: cdOrderSelect.value,
         dgo: diagOnlyCheckbox.checked ? "1" : "0",
         ts: tipStyleSelect.value,
+        tb: tipBaseSlider.value,
         rj: jiggleSlider.value,
         wf: wobbleFreqSlider.value, wo: wobbleOctavesSlider.value, ws: wobbleScaleSlider.value,
         dbg: colorful.checked ? "1" : "0",
@@ -801,6 +823,7 @@
       if (get("cdo") != null) cdOrderSelect.value = get("cdo");
       if (get("dgo") != null) diagOnlyCheckbox.checked = get("dgo") === "1";
       if (get("ts") != null) tipStyleSelect.value = get("ts");
+      if (get("tb") != null) { tipBaseSlider.value = get("tb"); tipBaseValue.textContent = get("tb"); }
       if (get("rj") != null) { jiggleSlider.value = get("rj"); jiggleValue.textContent = get("rj"); }
       if (get("wf") != null) { wobbleFreqSlider.value = get("wf"); wobbleFreqValue.textContent = get("wf"); }
       if (get("wo") != null) { wobbleOctavesSlider.value = get("wo"); wobbleOctavesValue.textContent = get("wo"); }
@@ -858,6 +881,7 @@
         connectDiagonalsOrder: cdOrderSelect.value,
         diagOnly: diagOnlyCheckbox.checked,
         tipStyle: tipStyleSelect.value,
+        tipBase: parseFloat(tipBaseSlider.value),
         jiggle: parseFloat(jiggleSlider.value),
         fullLCorners: fullLCornersCheckbox.checked,
         skipCheckerLCorners: skipCheckerLCornersCheckbox.checked,
@@ -998,6 +1022,10 @@
     cdOrderSelect.addEventListener("change", redraw);
     diagOnlyCheckbox.addEventListener("change", () => redraw());
     tipStyleSelect.addEventListener("change", redraw);
+    tipBaseSlider.addEventListener("input", () => {
+      tipBaseValue.textContent = tipBaseSlider.value;
+      redraw();
+    });
     fullLCornersCheckbox.addEventListener("change", () => {
       skipCheckerLCornersRow.style.display = fullLCornersCheckbox.checked ? "" : "none";
       redraw();
