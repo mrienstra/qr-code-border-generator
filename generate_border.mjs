@@ -155,7 +155,8 @@ export function generate(svgText, {
   noFluff = false,
 } = {}) {
   const TIP_BASE_DEFAULTS = { "stubby-paw": 0.5 };
-  if (tipBase == null) tipBase = TIP_BASE_DEFAULTS[tipStyle] || 0;
+  // In mix mode, leave tipBase null so per-profile defaults are used at render time
+  if (tipBase == null && typeof tipStyle === "string") tipBase = TIP_BASE_DEFAULTS[tipStyle] || 0;
 
   let { squares: qr, qrSize } = parseQr(svgText);
   if (obfuscate) {
@@ -467,10 +468,23 @@ async function cli() {
       "rand-align": { type: "boolean", default: true },
       "rand-fluff": { type: "boolean", default: false },
       "full-l-corners": { type: "boolean", default: false },
+      "tip-style": { type: "string", default: "none" },
+      "island-style": { type: "string", default: "none" },
       "contour-mode": { type: "boolean", default: false },
       "no-fluff": { type: "boolean", default: false },
     },
   });
+
+  // Parse "paw:0.5,claw:1" → { paw: 0.5, claw: 1 }; plain "paw" passes through
+  function parseStyleArg(val) {
+    if (!val.includes(":")) return val;
+    const obj = {};
+    for (const part of val.split(",")) {
+      const [name, w] = part.split(":");
+      obj[name.trim()] = parseFloat(w);
+    }
+    return obj;
+  }
 
   // Replay mode: load exact inputs from a JSON fixture captured in the browser
   if (values.replay) {
@@ -515,6 +529,8 @@ async function cli() {
     randFluff: values["rand-fluff"],
     fullLCorners: values["full-l-corners"],
     skipCheckerLCorners: values["skip-checker-l-corners"],
+    tipStyle: parseStyleArg(values["tip-style"]),
+    islandStyle: parseStyleArg(values["island-style"]),
     contourMode: values["contour-mode"],
     noFluff: values["no-fluff"],
   });

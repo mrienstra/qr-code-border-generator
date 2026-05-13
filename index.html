@@ -433,6 +433,7 @@
               <label>Tip style</label>
               <select id="tip-style"></select>
             </div>
+            <div id="tip-mix-sliders" style="display:none"></div>
             <div class="field">
               <label>Tip base</label>
               <div class="field-row">
@@ -444,6 +445,7 @@
               <label>Island style</label>
               <select id="island-style"></select>
             </div>
+            <div id="island-mix-sliders" style="display:none"></div>
             <div class="field">
               <label>Jiggle</label>
               <div class="field-row">
@@ -617,6 +619,8 @@
     const tipBaseSlider = document.getElementById("tip-base");
     const tipBaseValue = document.getElementById("tip-base-val");
     const islandStyleSelect = document.getElementById("island-style");
+    const tipMixContainer = document.getElementById("tip-mix-sliders");
+    const islandMixContainer = document.getElementById("island-mix-sliders");
     const TIP_BASE_DEFAULTS = {
       none: 0,
       ...Object.fromEntries(
@@ -788,9 +792,13 @@
         cd: connectDiagonalsSlider.value,
         cdo: cdOrderSelect.value,
         dgo: diagOnlyCheckbox.checked ? "1" : "0",
-        ts: tipStyleSelect.value,
-        ...(parseFloat(tipBaseSlider.value) !== (TIP_BASE_DEFAULTS[tipStyleSelect.value] || 0) ? { tb: tipBaseSlider.value } : {}),
-        is: islandStyleSelect.value,
+        ts: tipStyleSelect.value === "mix"
+          ? Object.entries(getMixWeights(tipMixContainer)).map(([n,w]) => `${n}:${w}`).join(",") || "none"
+          : tipStyleSelect.value,
+        ...(tipStyleSelect.value !== "mix" && parseFloat(tipBaseSlider.value) !== (TIP_BASE_DEFAULTS[tipStyleSelect.value] || 0) ? { tb: tipBaseSlider.value } : {}),
+        is: islandStyleSelect.value === "mix"
+          ? Object.entries(getMixWeights(islandMixContainer)).map(([n,w]) => `${n}:${w}`).join(",") || "none"
+          : islandStyleSelect.value,
         rj: jiggleSlider.value,
         wf: wobbleFreqSlider.value, wo: wobbleOctavesSlider.value, ws: wobbleScaleSlider.value,
         dbg: colorful.checked ? "1" : "0",
@@ -873,9 +881,39 @@
       if (get("cd") != null) { connectDiagonalsSlider.value = get("cd"); connectDiagonalsValue.textContent = cdLabel(get("cd")); }
       if (get("cdo") != null) cdOrderSelect.value = get("cdo");
       if (get("dgo") != null) diagOnlyCheckbox.checked = get("dgo") === "1";
-      if (get("ts") != null) tipStyleSelect.value = get("ts");
+      if (get("ts") != null) {
+        const tsVal = get("ts");
+        if (tsVal.includes(":")) {
+          tipStyleSelect.value = "mix";
+          const weights = {};
+          for (const part of tsVal.split(",")) {
+            const [n, w] = part.split(":");
+            weights[n.trim()] = parseFloat(w);
+          }
+          setMixWeights(tipMixContainer, weights);
+          tipMixContainer.style.display = "";
+        } else {
+          tipStyleSelect.value = tsVal;
+          tipMixContainer.style.display = "none";
+        }
+      }
       { const tb = get("tb") != null ? get("tb") : String(TIP_BASE_DEFAULTS[tipStyleSelect.value] || 0); tipBaseSlider.value = tb; tipBaseValue.textContent = tb; }
-      if (get("is") != null) islandStyleSelect.value = get("is");
+      if (get("is") != null) {
+        const isVal = get("is");
+        if (isVal.includes(":")) {
+          islandStyleSelect.value = "mix";
+          const weights = {};
+          for (const part of isVal.split(",")) {
+            const [n, w] = part.split(":");
+            weights[n.trim()] = parseFloat(w);
+          }
+          setMixWeights(islandMixContainer, weights);
+          islandMixContainer.style.display = "";
+        } else {
+          islandStyleSelect.value = isVal;
+          islandMixContainer.style.display = "none";
+        }
+      }
       if (get("rj") != null) { jiggleSlider.value = get("rj"); jiggleValue.textContent = get("rj"); }
       if (get("wf") != null) { wobbleFreqSlider.value = get("wf"); wobbleFreqValue.textContent = get("wf"); }
       if (get("wo") != null) { wobbleOctavesSlider.value = get("wo"); wobbleOctavesValue.textContent = get("wo"); }
@@ -932,9 +970,9 @@
         connectDiagonals: parseFloat(connectDiagonalsSlider.value),
         connectDiagonalsOrder: cdOrderSelect.value,
         diagOnly: diagOnlyCheckbox.checked,
-        tipStyle: tipStyleSelect.value,
-        tipBase: parseFloat(tipBaseSlider.value),
-        islandStyle: islandStyleSelect.value,
+        tipStyle: tipStyleSelect.value === "mix" ? getMixWeights(tipMixContainer) : tipStyleSelect.value,
+        tipBase: tipStyleSelect.value === "mix" ? null : parseFloat(tipBaseSlider.value),
+        islandStyle: islandStyleSelect.value === "mix" ? getMixWeights(islandMixContainer) : islandStyleSelect.value,
         jiggle: parseFloat(jiggleSlider.value),
         fullLCorners: fullLCornersCheckbox.checked,
         skipCheckerLCorners: skipCheckerLCornersCheckbox.checked,
@@ -946,10 +984,16 @@
         noFluff: noFluffCheckbox.checked,
       };
       // Build sparse repro options (omit values matching generate()'s defaults)
-      const effectiveDefaults = { ...GENERATE_DEFAULTS, tipBase: TIP_BASE_DEFAULTS[options.tipStyle] || 0 };
+      const effectiveDefaults = {
+        ...GENERATE_DEFAULTS,
+        tipBase: typeof options.tipStyle === "string" ? (TIP_BASE_DEFAULTS[options.tipStyle] || 0) : null,
+      };
       const reproOptions = {};
       for (const [k, v] of Object.entries(options)) {
-        if (v !== null && typeof v === "object") { reproOptions[k] = v; continue; }
+        if (v !== null && typeof v === "object") {
+          if (Object.values(v).some(w => w > 0)) reproOptions[k] = v;
+          continue;
+        }
         if (v !== effectiveDefaults[k]) reproOptions[k] = v;
       }
       window._lastGenerateInputs = { svgText, options: reproOptions };
@@ -1084,47 +1128,109 @@
 
     function labelForStyle(name) {
       if (name === "none") return "None";
+      if (name === "mix") return "Mix";
       return name.charAt(0).toUpperCase() + name.slice(1).replaceAll("-", " ");
     }
 
-    function addStyleOption (name, selected) {
-        const opt = document.createElement("option");
-        opt.value = name;
-        opt.textContent = labelForStyle(name);
-        if (selected) opt.selected = true;
-        tipStyleSelect.appendChild(opt);
+    // Build per-style weight sliders into a container div
+    function buildMixSliders(profiles, container) {
+      container.innerHTML = "";
+      for (const name of Object.keys(profiles)) {
+        const row = document.createElement("div");
+        row.className = "field";
+        row.style.marginLeft = "12px";
+        const label = document.createElement("label");
+        label.style.fontSize = "12px";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = labelForStyle(name);
+        const valSpan = document.createElement("span");
+        valSpan.className = "range-value";
+        valSpan.textContent = "0";
+        valSpan.dataset.mixName = name;
+        label.appendChild(nameSpan);
+        label.appendChild(valSpan);
+        const fr = document.createElement("div");
+        fr.className = "field-row";
+        const input = document.createElement("input");
+        input.type = "range";
+        input.min = "0"; input.max = "1"; input.step = "0.01"; input.value = "0";
+        input.dataset.mixName = name;
+        input.addEventListener("input", () => {
+          valSpan.textContent = parseFloat(input.value).toFixed(2);
+          redraw();
+        });
+        fr.appendChild(input);
+        fr.appendChild(valSpan);
+        row.appendChild(label);
+        row.appendChild(fr);
+        container.appendChild(row);
       }
+    }
+
+    // Read weights from a mix slider container → { name: weight, ... }
+    function getMixWeights(container) {
+      const obj = {};
+      for (const input of container.querySelectorAll("input[type=range]")) {
+        const w = parseFloat(input.value);
+        if (w > 0) obj[input.dataset.mixName] = w;
+      }
+      return obj;
+    }
+
+    // Set mix slider values from a weights object
+    function setMixWeights(container, weights) {
+      for (const input of container.querySelectorAll("input[type=range]")) {
+        const w = weights[input.dataset.mixName] || 0;
+        input.value = String(w);
+        const valSpan = container.querySelector(`span[data-mix-name="${input.dataset.mixName}"]`);
+        if (valSpan) valSpan.textContent = w.toFixed(2);
+      }
+    }
+
+    function addSelectOption(select, name, selected) {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = labelForStyle(name);
+      if (selected) opt.selected = true;
+      select.appendChild(opt);
+    }
 
     function buildStyleOptions(selected = "none") {
       tipStyleSelect.innerHTML = "";
-      addStyleOption("none", "none" === selected);
+      addSelectOption(tipStyleSelect, "none", "none" === selected);
       for (const name of Object.keys(TIP_PROFILES)) {
-        addStyleOption(name, name === selected);
+        addSelectOption(tipStyleSelect, name, name === selected);
       }
+      addSelectOption(tipStyleSelect, "mix", "mix" === selected);
     }
 
     buildStyleOptions();
+    buildMixSliders(TIP_PROFILES, tipMixContainer);
 
     // Island style dropdown
-    {
-      function addIslandOption(name, selected) {
-        const opt = document.createElement("option");
-        opt.value = name;
-        opt.textContent = labelForStyle(name);
-        if (selected) opt.selected = true;
-        islandStyleSelect.appendChild(opt);
-      }
-      addIslandOption("none", true);
+    function buildIslandOptions(selected = "none") {
+      islandStyleSelect.innerHTML = "";
+      addSelectOption(islandStyleSelect, "none", "none" === selected);
       for (const name of Object.keys(ISLAND_PROFILES)) {
-        addIslandOption(name, false);
+        addSelectOption(islandStyleSelect, name, name === selected);
       }
+      addSelectOption(islandStyleSelect, "mix", "mix" === selected);
     }
-    islandStyleSelect.addEventListener("change", redraw);
+    buildIslandOptions();
+    buildMixSliders(ISLAND_PROFILES, islandMixContainer);
+
+    islandStyleSelect.addEventListener("change", () => {
+      islandMixContainer.style.display = islandStyleSelect.value === "mix" ? "" : "none";
+      redraw();
+    });
 
     tipStyleSelect.addEventListener("change", () => {
-      const def = TIP_BASE_DEFAULTS[tipStyleSelect.value] || 0;
-      tipBaseSlider.value = String(def);
-      tipBaseValue.textContent = String(def);
+      tipMixContainer.style.display = tipStyleSelect.value === "mix" ? "" : "none";
+      if (tipStyleSelect.value !== "mix") {
+        const def = TIP_BASE_DEFAULTS[tipStyleSelect.value] || 0;
+        tipBaseSlider.value = String(def);
+        tipBaseValue.textContent = String(def);
+      }
       redraw();
     });
     tipBaseSlider.addEventListener("input", () => {

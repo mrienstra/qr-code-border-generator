@@ -257,6 +257,32 @@ export function buildLobedTipPath(p, ps, profile) {
   return segs.join("");
 }
 
+// Deterministic per-vertex hash for jiggle variation and style mixing
+function vtxHash(vx, vy, ch = 0) {
+  let s = (Math.round(vx * 1e6) * 374761393 + Math.round(vy * 1e6) * 668265263 + ch * 49979693) >>> 0;
+  s |= 0; s = s + 0x6D2B79F5 | 0;
+  let t = Math.imul(s ^ s >>> 15, 1 | s);
+  t ^= t + Math.imul(t ^ t >>> 7, 61 | t);
+  return ((t ^ t >>> 14) >>> 0) / 4294967296;
+}
+
+// Resolve a style parameter that may be a string or a weighted mix object.
+// Returns a single style name chosen deterministically per pixel.
+function resolveStyle(styleParam, profiles, x, y, hashChannel) {
+  if (typeof styleParam === "string") return styleParam;
+  const entries = Object.entries(styleParam).filter(([n, w]) => w > 0 && profiles[n]);
+  if (!entries.length) return "none";
+  if (entries.length === 1) return entries[0][0];
+  const total = entries.reduce((s, [, w]) => s + w, 0);
+  const h = vtxHash(x + 0.5, y + 0.5, hashChannel);
+  let cum = 0;
+  for (const [name, weight] of entries) {
+    cum += weight / total;
+    if (h < cum) return name;
+  }
+  return entries[entries.length - 1][0];
+}
+
 export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagonals = false, diagOnly = false, jiggle = 0, fullLCorners = false, skipCheckerLCorners = false, connectDiagonalsOrder = "default", tipStyle = "none", tipBase = null, islandStyle = "none") {
   const sorted = [...squares].map(unkey).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
   // Outer corner formatting
@@ -286,14 +312,7 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
   // eliminate inner corner fills entirely and make edge effects trivial --
   // one path per connected region, no shared-edge alignment issues.
   //
-  // Deterministic per-vertex hash for jiggle variation
-  function vtxHash(vx, vy, ch = 0) {
-    let s = (Math.round(vx * 1e6) * 374761393 + Math.round(vy * 1e6) * 668265263 + ch * 49979693) >>> 0;
-    s |= 0; s = s + 0x6D2B79F5 | 0;
-    let t = Math.imul(s ^ s >>> 15, 1 | s);
-    t ^= t + Math.imul(t ^ t >>> 7, 61 | t);
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  }
+  // vtxHash / resolveStyle are defined above squaresToRoundedPath
   // Two-pass mode: when fullLCorners is active with inner radius, inner fillets
   // need neighbor corner info that isn't available until all outlines are built.
   const needsTwoPass = fullLCorners && ri > 0;
@@ -386,10 +405,14 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
       if (br && hasL && hasU && !(skipCheckerLCorners && hasBR)) brR = 1;
       if (bl && hasR && hasU && !(skipCheckerLCorners && hasBL)) blR = 1;
     }
+    // Resolve per-pixel style (may be a single string or a weighted mix object)
+    const resolvedTip = resolveStyle(tipStyle, TIP_PROFILES, x, y, 100);
+    const resolvedIsland = resolveStyle(islandStyle, ISLAND_PROFILES, x, y, 101);
+
     // Tip detection: pixel with exactly 1 cardinal neighbor and no diagonal
     // bridges on the exposed end. tipDir points away from the neighbor.
     let tipDir = null;
-    if (tipStyle !== "none" && remCurrent === 1) {
+    if (resolvedTip !== "none" && remCurrent === 1) {
       if (hasD && !diagTL && !diagTR)      tipDir = "up";
       else if (hasU && !diagBL && !diagBR)  tipDir = "down";
       else if (hasR && !diagTL && !diagBL)  tipDir = "left";
@@ -399,7 +422,7 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
     // Outer corners: rounded pixel outline
     let path;
     if (tipDir) {
-      const profile = TIP_PROFILES[tipStyle];
+      const profile = TIP_PROFILES[resolvedTip];
 
       if (profile) {
         const base = tipBase ?? profile?.base ?? 0;
@@ -420,14 +443,14 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
         }
       }
     } else if (
-      islandStyle !== "none" && ISLAND_PROFILES[islandStyle] &&
+      resolvedIsland !== "none" && ISLAND_PROFILES[resolvedIsland] &&
       !hasL && !hasR && !hasU && !hasD &&
       !(diagOnly ? hasTL : diagTL) &&
       !(diagOnly ? hasTR : diagTR) &&
       !(diagOnly ? hasBR : diagBR) &&
       !(diagOnly ? hasBL : diagBL)
     ) {
-      path = buildRadialIslandPath(x + 0.5, y + 0.5, ISLAND_PROFILES[islandStyle]);
+      path = buildRadialIslandPath(x + 0.5, y + 0.5, ISLAND_PROFILES[resolvedIsland]);
     } else if (!tl && !tr && !br && !bl) {
       path = `M${fmt(x)},${fmt(y)}h1v1h-1z`;
     } else if (jiggle === 0 && tlR === ro && trR === ro && brR === ro && blR === ro) {
