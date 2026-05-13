@@ -422,7 +422,10 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
     } else if (
       islandStyle !== "none" && ISLAND_PROFILES[islandStyle] &&
       !hasL && !hasR && !hasU && !hasD &&
-      !hasTL && !hasTR && !hasBR && !hasBL
+      !(diagOnly ? hasTL : diagTL) &&
+      !(diagOnly ? hasTR : diagTR) &&
+      !(diagOnly ? hasBR : diagBR) &&
+      !(diagOnly ? hasBL : diagBL)
     ) {
       path = buildRadialIslandPath(x + 0.5, y + 0.5, ISLAND_PROFILES[islandStyle]);
     } else if (!tl && !tr && !br && !bl) {
