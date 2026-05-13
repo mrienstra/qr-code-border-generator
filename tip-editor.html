@@ -162,6 +162,10 @@ function buildSliders() {
       input.min = "0";
       input.max = "12";
       input.step = "1";
+    } else if (/(Open|Rotate)$/.test(name)) {
+      input.min = "-1";
+      input.max = "1";
+      input.step = "0.02";
     } else {
       input.min = "0";
       input.max = "1";
