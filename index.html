@@ -533,6 +533,18 @@
     import { TIP_PROFILES } from "./per-pixel-paths.mjs";
     import { ISLAND_PROFILES } from "./island-profiles.mjs";
 
+    // Load custom profiles from localStorage and inject into module-level objects
+    const BUILTIN_TIP_NAMES = new Set(Object.keys(TIP_PROFILES));
+    const BUILTIN_ISLAND_NAMES = new Set(Object.keys(ISLAND_PROFILES));
+
+    function loadCustomProfiles(key) {
+      try { const r = localStorage.getItem(key); return r ? JSON.parse(r) : {}; } catch { return {}; }
+    }
+    const customTipProfiles = loadCustomProfiles("qr-custom-tip-profiles");
+    const customIslandProfiles = loadCustomProfiles("qr-custom-island-profiles");
+    Object.assign(TIP_PROFILES, customTipProfiles);
+    Object.assign(ISLAND_PROFILES, customIslandProfiles);
+
     const QrCode = qrcodegen.QrCode;
     const QrSegment = qrcodegen.QrSegment;
     const Ecc = QrCode.Ecc;
@@ -996,6 +1008,20 @@
         }
         if (v !== effectiveDefaults[k]) reproOptions[k] = v;
       }
+      // Embed custom profile definitions referenced by tipStyle/islandStyle
+      function collectCustomRefs(styleVal, builtins, allCustoms) {
+        const refs = {};
+        const names = typeof styleVal === "string" ? [styleVal] : Object.keys(styleVal || {});
+        for (const n of names) {
+          if (!builtins.has(n) && allCustoms[n]) refs[n] = allCustoms[n];
+        }
+        return Object.keys(refs).length ? refs : undefined;
+      }
+      const reproCustomTips = collectCustomRefs(options.tipStyle, BUILTIN_TIP_NAMES, customTipProfiles);
+      const reproCustomIslands = collectCustomRefs(options.islandStyle, BUILTIN_ISLAND_NAMES, customIslandProfiles);
+      if (reproCustomTips) reproOptions.customTipProfiles = reproCustomTips;
+      if (reproCustomIslands) reproOptions.customIslandProfiles = reproCustomIslands;
+
       window._lastGenerateInputs = { svgText, options: reproOptions };
       const result = generate(svgText, options);
 

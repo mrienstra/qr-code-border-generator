@@ -7,8 +7,9 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font: 14px/1.4 system-ui, sans-serif; background: #f5f5f5; padding: 20px; }
     h1 { font-size: 18px; margin-bottom: 12px; }
-    .top { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
+    .top { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
     .top select, .top button { font: inherit; padding: 4px 8px; }
+    .top input[type="text"] { font: inherit; padding: 4px 8px; width: 140px; }
     .main { display: flex; gap: 24px; align-items: flex-start; }
     .canvas-wrap svg { background: white; border: 1px solid #ccc; border-radius: 4px; }
     .sliders { min-width: 280px; }
@@ -17,6 +18,8 @@
     .slider-row .val { font-family: monospace; color: #666; }
     .slider-row input[type="range"] { width: 100%; }
     .code-out { margin-top: 16px; font: 12px/1.5 monospace; background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 8px; white-space: pre-wrap; }
+    .copied { color: #2a2; font-weight: bold; }
+    .save-row { display: flex; align-items: center; gap: 8px; }
   </style>
 </head>
 <body>
@@ -26,7 +29,12 @@
     <select id="style-select"></select>
     <button id="copy-btn">Copy constants</button>
     <button id="export-btn">Export SVG</button>
+    <button id="delete-btn" style="display:none">Delete custom</button>
     <span id="copy-msg"></span>
+  </div>
+  <div class="top save-row">
+    <input type="text" id="save-name" placeholder="Custom profile name">
+    <button id="save-btn">Save to browser</button>
   </div>
 
   <div class="main">
@@ -45,6 +53,27 @@
   <script type="module">
     import { ISLAND_PROFILES, buildRadialIslandPath } from "./island-profiles.mjs";
 
+    const LS_KEY = "qr-custom-island-profiles";
+    const BUILTIN_NAMES = new Set(Object.keys(ISLAND_PROFILES));
+
+    function loadCustomProfiles() {
+      try {
+        const raw = localStorage.getItem(LS_KEY);
+        if (!raw) return {};
+        return JSON.parse(raw);
+      } catch { return {}; }
+    }
+
+    function saveCustomProfiles(customs) {
+      localStorage.setItem(LS_KEY, JSON.stringify(customs));
+    }
+
+    // Inject custom profiles
+    const customProfiles = loadCustomProfiles();
+    for (const [name, profile] of Object.entries(customProfiles)) {
+      ISLAND_PROFILES[name] = profile;
+    }
+
     const DEFAULTS = JSON.parse(JSON.stringify(ISLAND_PROFILES));
     const styleSelect = document.getElementById("style-select");
     const slidersDiv = document.getElementById("sliders");
@@ -52,22 +81,43 @@
     const codeOut = document.getElementById("code-out");
     const copyBtn = document.getElementById("copy-btn");
     const copyMsg = document.getElementById("copy-msg");
+    const saveNameInput = document.getElementById("save-name");
+    const saveBtn = document.getElementById("save-btn");
+    const deleteBtn = document.getElementById("delete-btn");
+
+    function labelForStyle(name) {
+      return name
+        .split("-")
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ");
+    }
 
     function buildStyleOptions(selected = "flower5") {
-      const STYLE_ORDER = [
-        ["star4", "Star 4"],
-        ["diamond4", "Diamond 4"],
-        ["flower5", "Flower 5"],
-      ];
-
       styleSelect.innerHTML = "";
-      for (const [name, label] of STYLE_ORDER) {
-        if (!(name in ISLAND_PROFILES)) continue;
+
+      // Built-in profiles
+      for (const name of BUILTIN_NAMES) {
         const opt = document.createElement("option");
         opt.value = name;
-        opt.textContent = label;
+        opt.textContent = labelForStyle(name);
         opt.selected = name === selected;
         styleSelect.appendChild(opt);
+      }
+
+      // Custom profiles
+      const customNames = Object.keys(ISLAND_PROFILES).filter(n => !BUILTIN_NAMES.has(n));
+      if (customNames.length) {
+        const sep = document.createElement("option");
+        sep.disabled = true;
+        sep.textContent = "--- Custom ---";
+        styleSelect.appendChild(sep);
+        for (const name of customNames) {
+          const opt = document.createElement("option");
+          opt.value = name;
+          opt.textContent = labelForStyle(name);
+          opt.selected = name === selected;
+          styleSelect.appendChild(opt);
+        }
       }
     }
 
@@ -98,6 +148,9 @@
       codeOut.textContent = Object.entries(params)
         .map(([k, v]) => `${k}: ${typeof v === "number" ? v.toFixed(2) : v}`)
         .join(", ");
+
+      // Show/hide delete button for custom profiles
+      deleteBtn.style.display = !BUILTIN_NAMES.has(currentStyle()) ? "" : "none";
     }
 
     function sliderRangeFor(name) {
@@ -144,13 +197,15 @@
           updateShape();
         });
 
-        input.addEventListener("dblclick", () => {
-          const v = defaults[name];
-          params[name] = v;
-          input.value = String(v);
-          valSpan.textContent = v.toFixed(2);
-          updateShape();
-        });
+        if (defaults) {
+          input.addEventListener("dblclick", () => {
+            const v = defaults[name];
+            params[name] = v;
+            input.value = String(v);
+            valSpan.textContent = v.toFixed(2);
+            updateShape();
+          });
+        }
 
         row.appendChild(label);
         row.appendChild(input);
@@ -163,12 +218,54 @@
       updateShape();
     });
 
+    // Save custom profile
+    saveBtn.addEventListener("click", () => {
+      const name = saveNameInput.value.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      if (!name) { copyMsg.textContent = "Enter a name"; setTimeout(() => copyMsg.textContent = "", 1500); return; }
+      if (BUILTIN_NAMES.has(name)) { copyMsg.textContent = "Can't overwrite built-in"; setTimeout(() => copyMsg.textContent = "", 1500); return; }
+
+      const params = JSON.parse(JSON.stringify(currentParams()));
+      ISLAND_PROFILES[name] = params;
+      DEFAULTS[name] = JSON.parse(JSON.stringify(params));
+
+      const customs = loadCustomProfiles();
+      customs[name] = params;
+      saveCustomProfiles(customs);
+
+      buildStyleOptions(name);
+      buildSliders();
+      updateShape();
+      copyMsg.textContent = "Saved!";
+      copyMsg.className = "copied";
+      setTimeout(() => { copyMsg.textContent = ""; }, 1500);
+    });
+
+    // Delete custom profile
+    deleteBtn.addEventListener("click", () => {
+      const name = currentStyle();
+      if (BUILTIN_NAMES.has(name)) return;
+
+      delete ISLAND_PROFILES[name];
+      delete DEFAULTS[name];
+
+      const customs = loadCustomProfiles();
+      delete customs[name];
+      saveCustomProfiles(customs);
+
+      buildStyleOptions("flower5");
+      buildSliders();
+      updateShape();
+      copyMsg.textContent = "Deleted!";
+      setTimeout(() => { copyMsg.textContent = ""; }, 1500);
+    });
+
     copyBtn.addEventListener("click", () => {
       const text = Object.entries(currentParams())
         .map(([k, v]) => `${k}: ${typeof v === "number" ? v.toFixed(2) : v}`)
         .join(", ");
       navigator.clipboard.writeText(text).then(() => {
         copyMsg.textContent = "Copied!";
+        copyMsg.className = "copied";
         setTimeout(() => copyMsg.textContent = "", 1500);
       });
     });

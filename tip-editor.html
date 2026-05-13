@@ -7,9 +7,10 @@
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font: 14px/1.4 system-ui, sans-serif; background: #f5f5f5; padding: 20px; }
   h1 { font-size: 18px; margin-bottom: 12px; }
-  .top { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
+  .top { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
   .top select { font: inherit; padding: 4px 8px; }
   .top button { font: inherit; padding: 4px 12px; cursor: pointer; }
+  .top input[type=text] { font: inherit; padding: 4px 8px; width: 140px; }
   .main { display: flex; gap: 24px; align-items: flex-start; }
   .canvas-wrap { flex-shrink: 0; }
   .canvas-wrap svg { background: white; border: 1px solid #ccc; border-radius: 4px; }
@@ -21,6 +22,7 @@
   .code-out { margin-top: 16px; font: 12px/1.5 monospace; background: #fff; border: 1px solid #ccc;
     border-radius: 4px; padding: 8px; white-space: pre-wrap; word-break: break-all; min-height: 40px; }
   .copied { color: #2a2; font-weight: bold; }
+  .save-row { display: flex; align-items: center; gap: 8px; }
 </style>
 </head>
 <body>
@@ -31,7 +33,12 @@
   <select id="style-select"></select>
   <button id="copy-btn">Copy constants</button>
   <button id="export-btn">Export SVG</button>
+  <button id="delete-btn" style="display:none">Delete custom</button>
   <span id="copy-msg"></span>
+</div>
+<div class="top save-row">
+  <input type="text" id="save-name" placeholder="Custom profile name">
+  <button id="save-btn">Save to browser</button>
 </div>
 
 <div class="main">
@@ -53,6 +60,28 @@
 <script type="module">
 import { TIP_PROFILES, buildLobedTipPath } from "./per-pixel-paths.mjs";
 
+const LS_KEY = "qr-custom-tip-profiles";
+const BUILTIN_NAMES = new Set(Object.keys(TIP_PROFILES));
+
+// Load custom profiles from localStorage
+function loadCustomProfiles() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw);
+  } catch { return {}; }
+}
+
+function saveCustomProfiles(customs) {
+  localStorage.setItem(LS_KEY, JSON.stringify(customs));
+}
+
+// Inject custom profiles into TIP_PROFILES
+const customProfiles = loadCustomProfiles();
+for (const [name, profile] of Object.entries(customProfiles)) {
+  TIP_PROFILES[name] = profile;
+}
+
 // Deep-copy defaults so we can reset
 const DEFAULTS = JSON.parse(JSON.stringify(TIP_PROFILES));
 
@@ -62,6 +91,9 @@ const shapePath = document.getElementById("shape");
 const codeOut = document.getElementById("code-out");
 const copyBtn = document.getElementById("copy-btn");
 const copyMsg = document.getElementById("copy-msg");
+const saveNameInput = document.getElementById("save-name");
+const saveBtn = document.getElementById("save-btn");
+const deleteBtn = document.getElementById("delete-btn");
 
 // Build grid lines
 {
@@ -116,6 +148,9 @@ function updateShape() {
   // Update code output
   const parts = Object.entries(params).map(([k, v]) => `${k}: ${parseFloat(v.toFixed(2)).toString()}`);
   codeOut.textContent = parts.join(", ");
+
+  // Show/hide delete button for custom profiles
+  deleteBtn.style.display = !BUILTIN_NAMES.has(style) ? "" : "none";
 }
 
 function labelForStyle(name) {
@@ -128,12 +163,29 @@ function labelForStyle(name) {
 function buildStyleOptions(selected = "paw") {
   styleSelect.innerHTML = "";
 
-  for (const name of Object.keys(TIP_PROFILES)) {
+  // Built-in profiles
+  for (const name of BUILTIN_NAMES) {
     const opt = document.createElement("option");
     opt.value = name;
     opt.textContent = labelForStyle(name);
     if (name === selected) opt.selected = true;
     styleSelect.appendChild(opt);
+  }
+
+  // Custom profiles
+  const customNames = Object.keys(TIP_PROFILES).filter(n => !BUILTIN_NAMES.has(n));
+  if (customNames.length) {
+    const sep = document.createElement("option");
+    sep.disabled = true;
+    sep.textContent = "--- Custom ---";
+    styleSelect.appendChild(sep);
+    for (const name of customNames) {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = labelForStyle(name);
+      if (name === selected) opt.selected = true;
+      styleSelect.appendChild(opt);
+    }
   }
 }
 
@@ -181,13 +233,15 @@ function buildSliders() {
     });
 
     // Double-click to reset to default
-    input.addEventListener("dblclick", () => {
-      const v = defaults[name];
-      input.value = String(v);
-      params[name] = v;
-      valSpan.textContent = v.toFixed(2);
-      updateShape();
-    });
+    if (defaults) {
+      input.addEventListener("dblclick", () => {
+        const v = defaults[name];
+        input.value = String(v);
+        params[name] = v;
+        valSpan.textContent = v.toFixed(2);
+        updateShape();
+      });
+    }
 
     row.appendChild(label);
     row.appendChild(input);
@@ -203,6 +257,49 @@ updateShape();
 styleSelect.addEventListener("change", () => {
   buildSliders();
   updateShape();
+});
+
+// Save custom profile
+saveBtn.addEventListener("click", () => {
+  const name = saveNameInput.value.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+  if (!name) { copyMsg.textContent = "Enter a name"; setTimeout(() => copyMsg.textContent = "", 1500); return; }
+  if (BUILTIN_NAMES.has(name)) { copyMsg.textContent = "Can't overwrite built-in"; setTimeout(() => copyMsg.textContent = "", 1500); return; }
+
+  // Clone current params
+  const params = JSON.parse(JSON.stringify(currentParams()));
+  TIP_PROFILES[name] = params;
+  DEFAULTS[name] = JSON.parse(JSON.stringify(params));
+
+  // Persist to localStorage
+  const customs = loadCustomProfiles();
+  customs[name] = params;
+  saveCustomProfiles(customs);
+
+  buildStyleOptions(name);
+  buildSliders();
+  updateShape();
+  copyMsg.textContent = "Saved!";
+  copyMsg.className = "copied";
+  setTimeout(() => { copyMsg.textContent = ""; }, 1500);
+});
+
+// Delete custom profile
+deleteBtn.addEventListener("click", () => {
+  const name = currentStyle();
+  if (BUILTIN_NAMES.has(name)) return;
+
+  delete TIP_PROFILES[name];
+  delete DEFAULTS[name];
+
+  const customs = loadCustomProfiles();
+  delete customs[name];
+  saveCustomProfiles(customs);
+
+  buildStyleOptions("paw");
+  buildSliders();
+  updateShape();
+  copyMsg.textContent = "Deleted!";
+  setTimeout(() => { copyMsg.textContent = ""; }, 1500);
 });
 
 copyBtn.addEventListener("click", () => {

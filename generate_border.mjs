@@ -4,8 +4,10 @@
  */
 
 import { key, unkey, FINDER_ZONE, fmt, trimEdges, flipVertical, flipHorizontal, shift, offsetToSvg, trimCornersDiagonal, squaresToPath, squaresToRoundedPath, squaresToContourPath, squaresToCleanPath } from "./pixel-paths.mjs";
+import { TIP_PROFILES } from "./per-pixel-paths.mjs";
 import { parseQr, randomizeAlignmentPatterns, obfuscatePatterns, getAlignmentPositions } from "./qr-patterns.mjs";
 import { CIRCLE_RATIO, CIRCLE_MARGIN, CIRCLE_STROKE_WIDTH, computeLayout, pixelOverlapsStroke, generateSvg } from "./svg-output.mjs";
+import { ISLAND_PROFILES } from "./island-profiles.mjs";
 
 // Re-export public API so existing consumers (index.html) keep working
 export { parseQr, getAlignmentPositions, computeLayout };
@@ -153,7 +155,13 @@ export function generate(svgText, {
   wobbleOctaves = 3,
   wobbleScale = 0,
   noFluff = false,
+  customTipProfiles,
+  customIslandProfiles,
 } = {}) {
+  // Inject custom profiles into the module-level objects so resolveStyle() can find them
+  if (customTipProfiles) Object.assign(TIP_PROFILES, customTipProfiles);
+  if (customIslandProfiles) Object.assign(ISLAND_PROFILES, customIslandProfiles);
+
   const TIP_BASE_DEFAULTS = { "stubby-paw": 0.5 };
   // In mix mode, leave tipBase null so per-profile defaults are used at render time
   if (tipBase == null && typeof tipStyle === "string") tipBase = TIP_BASE_DEFAULTS[tipStyle] || 0;
