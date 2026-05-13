@@ -3,6 +3,7 @@
  */
 
 import { key, unkey, fmt } from './pixel-paths.mjs';
+import { ISLAND_PROFILES, buildRadialIslandPath } from './island-profiles.mjs';
 
 // Map a normalized (u,v) point in "tip-up" space to actual pixel coords
 // for any tip direction. u runs across (0=left, 1=right), v runs from
@@ -256,7 +257,7 @@ export function buildLobedTipPath(p, ps, profile) {
   return segs.join("");
 }
 
-export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagonals = false, diagOnly = false, jiggle = 0, fullLCorners = false, skipCheckerLCorners = false, connectDiagonalsOrder = "default", tipStyle = "none", tipBase = null) {
+export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connectDiagonals = false, diagOnly = false, jiggle = 0, fullLCorners = false, skipCheckerLCorners = false, connectDiagonalsOrder = "default", tipStyle = "none", tipBase = null, islandStyle = "none") {
   const sorted = [...squares].map(unkey).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
   // Outer corner formatting
   const ro = rOuter;
@@ -418,6 +419,12 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
             + `L${p(0, 1)}z`;
         }
       }
+    } else if (
+      islandStyle !== "none" && ISLAND_PROFILES[islandStyle] &&
+      !hasL && !hasR && !hasU && !hasD &&
+      !hasTL && !hasTR && !hasBR && !hasBL
+    ) {
+      path = buildRadialIslandPath(x + 0.5, y + 0.5, ISLAND_PROFILES[islandStyle]);
     } else if (!tl && !tr && !br && !bl) {
       path = `M${fmt(x)},${fmt(y)}h1v1h-1z`;
     } else if (jiggle === 0 && tlR === ro && trR === ro && brR === ro && blR === ro) {
