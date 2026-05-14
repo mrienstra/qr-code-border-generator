@@ -87,6 +87,15 @@ h1 { font-size: 18px; margin-bottom: 12px; }
 }
 .paste-input:focus { opacity: 1; outline: none; }
 .paste-input:focus + .paste-hint { opacity: 0; pointer-events: none; }
+.context-controls {
+  display: flex; align-items: center; gap: 12px; margin-top: 8px; font-size: 13px;
+}
+.context-controls label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+.ri-label { gap: 6px; }
+.ri-label input[type=range] { width: 90px; }
+.ri-label span { font-family: monospace; color: var(--val-color); min-width: 2.5em; }
+#fillets { fill: var(--svg-shape-fill); }
+#context-pixels rect { fill: var(--svg-shape-fill); stroke: var(--svg-shape-stroke); }
 
 @supports (appearance: base-select) {
   select,

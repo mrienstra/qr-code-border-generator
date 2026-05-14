@@ -18,6 +18,7 @@ export function initProfileEditor({
   sliderRange,
   exportPrefix,
   formatValue = (_k, v) => (typeof v === "number" ? v.toFixed(2) : String(v)),
+  onUpdate,
 }) {
   const BUILTIN_NAMES = new Set(Object.keys(profiles));
 
@@ -148,6 +149,7 @@ export function initProfileEditor({
       .join(", ");
 
     updateSaveRow();
+    onUpdate?.();
   }
 
   // --- Sliders ---

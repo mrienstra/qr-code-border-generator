@@ -28,9 +28,17 @@
   <div class="canvas-wrap">
     <svg id="canvas" viewBox="-0.12 -0.12 1.24 1.24" width="500" height="500">
       <g id="grid"></g>
+      <g id="context-pixels"></g>
       <rect x="0" y="0" width="1" height="1" fill="none" stroke="#bbb" stroke-width="0.006"/>
       <path id="shape" fill="rgba(0,0,0,0.12)" stroke="#000" stroke-width="0.008" stroke-linejoin="round"/>
+      <path id="fillets" fill="rgba(0,0,0,0.12)" stroke="none"/>
     </svg>
+    <div class="context-controls">
+      <label><input type="checkbox" id="ctx-b"> B</label>
+      <label><input type="checkbox" id="ctx-bl"> BL</label>
+      <label><input type="checkbox" id="ctx-br"> BR</label>
+      <label class="ri-label">ri <input type="range" id="ctx-ri" min="0" max="0.5" step="0.01" value="0.25"><span id="ctx-ri-val">0.25</span></label>
+    </div>
   </div>
   <div class="sliders" id="sliders"></div>
 </div>
@@ -40,6 +48,7 @@
 <script type="module">
 import { TIP_PROFILES, buildLobedTipPath } from "./per-pixel-paths.mjs";
 import { initProfileEditor } from "./profile-editor.mjs";
+import { innerFilletAt } from "./util/inner-fillet.mjs";
 
 function buildPath(_style, params) {
   const f = v => {
@@ -67,6 +76,60 @@ function buildPath(_style, params) {
   }
 }
 
+// --- Context pixels & inner fillets ---
+const canvas = document.getElementById("canvas");
+const ctxGroup = document.getElementById("context-pixels");
+const filletsPath = document.getElementById("fillets");
+const ctxB = document.getElementById("ctx-b");
+const ctxBL = document.getElementById("ctx-bl");
+const ctxBR = document.getElementById("ctx-br");
+const ctxRi = document.getElementById("ctx-ri");
+const ctxRiVal = document.getElementById("ctx-ri-val");
+
+function updateContext() {
+  const b = ctxB.checked, bl = ctxBL.checked, br = ctxBR.checked;
+  const ri = parseFloat(ctxRi.value);
+
+  // Draw context pixel rectangles
+  ctxGroup.innerHTML = "";
+  const rects = [];
+  if (b)  rects.push({ x: 0, y: 1, w: 1, h: 1 });
+  if (bl) rects.push({ x: -1, y: 1, w: 1, h: 1 });
+  if (br) rects.push({ x: 1, y: 1, w: 1, h: 1 });
+  for (const { x, y, w, h } of rects) {
+    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    rect.setAttribute("x", x);
+    rect.setAttribute("y", y);
+    rect.setAttribute("width", w);
+    rect.setAttribute("height", h);
+    rect.setAttribute("fill", "var(--svg-shape-fill)");
+    rect.setAttribute("stroke", "var(--svg-shape-stroke)");
+    rect.setAttribute("stroke-width", "0.008");
+    ctxGroup.appendChild(rect);
+  }
+
+  // Compute inner fillets at concave vertices
+  const filletParts = [];
+  if (ri > 0) {
+    // Vertex (0,1): concave "tl" when tip + B + BL on
+    if (b && bl) filletParts.push(innerFilletAt(0, 1, "tl", ri));
+    // Vertex (1,1): concave "tr" when tip + B + BR on
+    if (b && br) filletParts.push(innerFilletAt(1, 1, "tr", ri));
+  }
+  filletsPath.setAttribute("d", filletParts.join(" "));
+
+  // Keep viewBox fixed — context pixels extend below/beside but framing stays the same
+  canvas.setAttribute("viewBox", "-0.12 -0.12 1.24 1.24");
+}
+
+ctxB.addEventListener("change", updateContext);
+ctxBL.addEventListener("change", updateContext);
+ctxBR.addEventListener("change", updateContext);
+ctxRi.addEventListener("input", () => {
+  ctxRiVal.textContent = parseFloat(ctxRi.value).toFixed(2);
+  updateContext();
+});
+
 initProfileEditor({
   profiles: TIP_PROFILES,
   lsKey: "qr-custom-tip-profiles",
@@ -79,7 +142,11 @@ initProfileEditor({
   },
   exportPrefix: "tip",
   formatValue: (_k, v) => parseFloat(v.toFixed(2)).toString(),
+  onUpdate: updateContext,
 });
+
+// Initial context render
+updateContext();
 </script>
 <script src="theme-toggle.js"></script>
 </body>
