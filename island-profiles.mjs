@@ -32,17 +32,12 @@ export const ISLAND_PROFILES = {
   },
 
   flower5: {
-    points: 5,
-    innerRadius: 0.24,
-    outerRadius: 0.48,
-    phase: 0.0,
-    peakPull: 0.09,
-    peakOpen: 0.35,
-    peakRotate: 0.0,
-    valleyPull: 0.05,
-    valleyOpen: -0.35,
-    valleyRotate: 0.0,
+    points: 5.00, innerRadius: 0.24, outerRadius: 0.48, phase: 0.00, peakPull: 0.13, peakOpen: 0.39, peakRotate: 0.00, valleyPull: 0.05, valleyOpen: -0.35, valleyRotate: 0.00
   },
+
+  "6-rounded": {
+    points: 6.00, innerRadius: 0.24, outerRadius: 0.48, phase: 0.00, peakPull: 0.16, peakOpen: 0.00, peakRotate: 0.00, valleyPull: 0.05, valleyOpen: 0.00, valleyRotate: 0.00
+  }
 };
 
 function polarToCartesian(centerX, centerY, radius, angleInDegrees) {
