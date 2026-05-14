@@ -38,6 +38,7 @@
       <label><input type="checkbox" id="ctx-bl"> BL</label>
       <label><input type="checkbox" id="ctx-br"> BR</label>
       <label class="ri-label">ri <input type="range" id="ctx-ri" min="0" max="0.5" step="0.01" value="0.25"><span id="ctx-ri-val">0.25</span></label>
+      <label><input type="checkbox" id="ctx-no-stroke"> Hide strokes</label>
     </div>
   </div>
   <div class="sliders" id="sliders"></div>
@@ -85,6 +86,14 @@ const ctxBL = document.getElementById("ctx-bl");
 const ctxBR = document.getElementById("ctx-br");
 const ctxRi = document.getElementById("ctx-ri");
 const ctxRiVal = document.getElementById("ctx-ri-val");
+const noStrokeCheckbox = document.getElementById("ctx-no-stroke");
+const shapePath = document.getElementById("shape");
+const canvasRect = document.querySelector("#canvas > rect");
+noStrokeCheckbox.addEventListener("change", () => {
+  const hide = noStrokeCheckbox.checked;
+  shapePath.style.stroke = hide ? "none" : "";
+  canvasRect.style.stroke = hide ? "none" : "";
+});
 
 function updateContext() {
   const b = ctxB.checked, bl = ctxBL.checked, br = ctxBR.checked;
@@ -103,8 +112,6 @@ function updateContext() {
     rect.setAttribute("width", w);
     rect.setAttribute("height", h);
     rect.setAttribute("fill", "var(--svg-shape-fill)");
-    rect.setAttribute("stroke", "var(--svg-shape-stroke)");
-    rect.setAttribute("stroke-width", "0.008");
     ctxGroup.appendChild(rect);
   }
 

@@ -95,7 +95,7 @@ h1 { font-size: 18px; margin-bottom: 12px; }
 .ri-label input[type=range] { width: 90px; }
 .ri-label span { font-family: monospace; color: var(--val-color); min-width: 2.5em; }
 #fillets { fill: var(--svg-shape-fill); }
-#context-pixels rect { fill: var(--svg-shape-fill); stroke: var(--svg-shape-stroke); }
+#context-pixels rect { fill: var(--svg-shape-fill); }
 
 @supports (appearance: base-select) {
   select,
