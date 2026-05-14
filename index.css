@@ -16,7 +16,6 @@
   --btn-secondary-hover: #d0d0d0;
   --separator: #eee;
   --dotted-border: #000;
-  color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -57,13 +56,7 @@
   --btn-secondary-hover: #444;
   --separator: #333;
   --dotted-border: #888;
-  color-scheme: dark;
 }
-:root[data-theme="light"] {
-  color-scheme: light;
-}
-
-* { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--fg); }
 .container { margin: 0 auto; padding: 1.5rem; }
 h1 { text-align: center; margin-bottom: 1.5rem; font-size: 1.5rem; }
