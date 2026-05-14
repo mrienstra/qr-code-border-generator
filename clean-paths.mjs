@@ -124,15 +124,16 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
       for (let x = minX; x <= maxX; x++) {
         const k = key(x, y);
         if (comp.has(k) || exterior.has(k) || holeVisited.has(k)) continue;
-        // Flood-fill this hole
+        // Flood-fill this hole (bounded to component bounding box)
         const hole = new Set();
         const hStack = [k];
         while (hStack.length) {
           const cur = hStack.pop();
-          if (holeVisited.has(cur) || comp.has(cur)) continue;
+          if (holeVisited.has(cur) || comp.has(cur) || exterior.has(cur)) continue;
+          const [hx, hy] = unkey(cur);
+          if (hx < minX || hx > maxX || hy < minY || hy > maxY) continue;
           holeVisited.add(cur);
           hole.add(cur);
-          const [hx, hy] = unkey(cur);
           for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
             const nk = key(hx + dx, hy + dy);
             if (!holeVisited.has(nk) && !comp.has(nk)) hStack.push(nk);
