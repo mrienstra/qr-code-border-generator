@@ -1,0 +1,20 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font: 14px/1.4 system-ui, sans-serif; background: #f5f5f5; padding: 20px; }
+h1 { font-size: 18px; margin-bottom: 12px; }
+.top { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+.top select, .top button { font: inherit; padding: 4px 8px; cursor: pointer; }
+.top input[type=text] { font: inherit; padding: 4px 8px; width: 140px; }
+.main { display: flex; gap: 24px; align-items: flex-start; }
+.canvas-wrap { flex-shrink: 0; }
+.canvas-wrap svg { background: white; border: 1px solid #ccc; border-radius: 4px; }
+.sliders { min-width: 260px; }
+.slider-row { margin-bottom: 8px; }
+.slider-row label { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 2px; }
+.slider-row .val { font-family: monospace; color: #666; }
+.slider-row input[type=range] { width: 100%; }
+.code-out {
+  margin-top: 16px; font: 12px/1.5 monospace; background: #fff; border: 1px solid #ccc;
+  border-radius: 4px; padding: 8px; white-space: pre-wrap; word-break: break-all; min-height: 40px;
+}
+.copied { color: #2a2; font-weight: bold; }
+.save-row { display: flex; align-items: center; gap: 8px; }

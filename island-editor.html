@@ -3,24 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <title>Island Profile Editor</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font: 14px/1.4 system-ui, sans-serif; background: #f5f5f5; padding: 20px; }
-    h1 { font-size: 18px; margin-bottom: 12px; }
-    .top { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
-    .top select, .top button { font: inherit; padding: 4px 8px; }
-    .top input[type="text"] { font: inherit; padding: 4px 8px; width: 140px; }
-    .main { display: flex; gap: 24px; align-items: flex-start; }
-    .canvas-wrap svg { background: white; border: 1px solid #ccc; border-radius: 4px; }
-    .sliders { min-width: 280px; }
-    .slider-row { margin-bottom: 8px; }
-    .slider-row label { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 2px; }
-    .slider-row .val { font-family: monospace; color: #666; }
-    .slider-row input[type="range"] { width: 100%; }
-    .code-out { margin-top: 16px; font: 12px/1.5 monospace; background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 8px; white-space: pre-wrap; }
-    .copied { color: #2a2; font-weight: bold; }
-    .save-row { display: flex; align-items: center; gap: 8px; }
-  </style>
+  <link rel="stylesheet" href="profile-editor.css">
 </head>
 <body>
   <h1>Island Profile Editor</h1>
@@ -52,246 +35,21 @@
 
   <script type="module">
     import { ISLAND_PROFILES, buildRadialIslandPath } from "./island-profiles.mjs";
+    import { initProfileEditor } from "./profile-editor.mjs";
 
-    const LS_KEY = "qr-custom-island-profiles";
-    const BUILTIN_NAMES = new Set(Object.keys(ISLAND_PROFILES));
-
-    function loadCustomProfiles() {
-      try {
-        const raw = localStorage.getItem(LS_KEY);
-        if (!raw) return {};
-        return JSON.parse(raw);
-      } catch { return {}; }
-    }
-
-    function saveCustomProfiles(customs) {
-      localStorage.setItem(LS_KEY, JSON.stringify(customs));
-    }
-
-    // Inject custom profiles
-    const customProfiles = loadCustomProfiles();
-    for (const [name, profile] of Object.entries(customProfiles)) {
-      ISLAND_PROFILES[name] = profile;
-    }
-
-    const DEFAULTS = JSON.parse(JSON.stringify(ISLAND_PROFILES));
-    const styleSelect = document.getElementById("style-select");
-    const slidersDiv = document.getElementById("sliders");
-    const shapePath = document.getElementById("shape");
-    const codeOut = document.getElementById("code-out");
-    const copyBtn = document.getElementById("copy-btn");
-    const copyMsg = document.getElementById("copy-msg");
-    const saveNameInput = document.getElementById("save-name");
-    const saveBtn = document.getElementById("save-btn");
-    const deleteBtn = document.getElementById("delete-btn");
-
-    function labelForStyle(name) {
-      return name
-        .split("-")
-        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-        .join(" ");
-    }
-
-    function buildStyleOptions(selected = "flower5") {
-      styleSelect.innerHTML = "";
-
-      // Built-in profiles
-      for (const name of BUILTIN_NAMES) {
-        const opt = document.createElement("option");
-        opt.value = name;
-        opt.textContent = labelForStyle(name);
-        opt.selected = name === selected;
-        styleSelect.appendChild(opt);
-      }
-
-      // Custom profiles
-      const customNames = Object.keys(ISLAND_PROFILES).filter(n => !BUILTIN_NAMES.has(n));
-      if (customNames.length) {
-        const sep = document.createElement("option");
-        sep.disabled = true;
-        sep.textContent = "--- Custom ---";
-        styleSelect.appendChild(sep);
-        for (const name of customNames) {
-          const opt = document.createElement("option");
-          opt.value = name;
-          opt.textContent = labelForStyle(name);
-          opt.selected = name === selected;
-          styleSelect.appendChild(opt);
-        }
-      }
-    }
-
-    const g = document.getElementById("grid");
-    let d = "";
-    for (let i = 0; i <= 10; i++) {
-      const v = i / 10;
-      d += `M${v},-0.1V1.1 M-0.1,${v}H1.1 `;
-    }
-    const gridPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    gridPath.setAttribute("d", d);
-    gridPath.setAttribute("stroke", "#e8e8e8");
-    gridPath.setAttribute("stroke-width", "0.003");
-    gridPath.setAttribute("fill", "none");
-    g.appendChild(gridPath);
-
-    function currentStyle() {
-      return styleSelect.value;
-    }
-
-    function currentParams() {
-      return ISLAND_PROFILES[currentStyle()];
-    }
-
-    function updateShape() {
-      const params = currentParams();
-      shapePath.setAttribute("d", buildRadialIslandPath(0.5, 0.5, params));
-      codeOut.textContent = Object.entries(params)
-        .map(([k, v]) => `${k}: ${typeof v === "number" ? v.toFixed(2) : v}`)
-        .join(", ");
-
-      // Show/hide delete button for custom profiles
-      deleteBtn.style.display = !BUILTIN_NAMES.has(currentStyle()) ? "" : "none";
-    }
-
-    function sliderRangeFor(name) {
-      if (name === "points") return { min: 2, max: 48, step: 1 };
-      if (name === "phase") return { min: 0, max: 1, step: 0.01 };
-      if (name.endsWith("Open") || name.endsWith("Rotate")) return { min: -1, max: 1, step: 0.01 };
-      return { min: 0, max: 1, step: 0.01 };
-    }
-
-    function buildSliders() {
-      slidersDiv.innerHTML = "";
-      const style = currentStyle();
-      const params = currentParams();
-      const defaults = DEFAULTS[style];
-
-      for (const [name, val] of Object.entries(params)) {
-        if (typeof val !== "number") continue;
-
-        const row = document.createElement("div");
-        row.className = "slider-row";
-
-        const label = document.createElement("label");
-        const nameSpan = document.createElement("span");
-        nameSpan.textContent = name;
-        const valSpan = document.createElement("span");
-        valSpan.className = "val";
-        valSpan.textContent = val.toFixed(2);
-
-        label.appendChild(nameSpan);
-        label.appendChild(valSpan);
-
-        const input = document.createElement("input");
-        input.type = "range";
-        const range = sliderRangeFor(name);
-        input.min = range.min;
-        input.max = range.max;
-        input.step = range.step;
-        input.value = String(val);
-
-        input.addEventListener("input", () => {
-          const v = parseFloat(input.value);
-          params[name] = v;
-          valSpan.textContent = v.toFixed(2);
-          updateShape();
-        });
-
-        if (defaults) {
-          input.addEventListener("dblclick", () => {
-            const v = defaults[name];
-            params[name] = v;
-            input.value = String(v);
-            valSpan.textContent = v.toFixed(2);
-            updateShape();
-          });
-        }
-
-        row.appendChild(label);
-        row.appendChild(input);
-        slidersDiv.appendChild(row);
-      }
-    }
-
-    styleSelect.addEventListener("change", () => {
-      buildSliders();
-      updateShape();
+    initProfileEditor({
+      profiles: ISLAND_PROFILES,
+      lsKey: "qr-custom-island-profiles",
+      defaultStyle: "flower5",
+      buildPath: (_style, params) => buildRadialIslandPath(0.5, 0.5, params),
+      sliderRange(name) {
+        if (name === "points") return { min: 2, max: 48, step: 1 };
+        if (name === "phase") return { min: 0, max: 1, step: 0.01 };
+        if (name.endsWith("Open") || name.endsWith("Rotate")) return { min: -1, max: 1, step: 0.01 };
+        return { min: 0, max: 1, step: 0.01 };
+      },
+      exportPrefix: "island",
     });
-
-    // Save custom profile
-    saveBtn.addEventListener("click", () => {
-      const name = saveNameInput.value.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-      if (!name) { copyMsg.textContent = "Enter a name"; setTimeout(() => copyMsg.textContent = "", 1500); return; }
-      if (BUILTIN_NAMES.has(name)) { copyMsg.textContent = "Can't overwrite built-in"; setTimeout(() => copyMsg.textContent = "", 1500); return; }
-
-      const params = JSON.parse(JSON.stringify(currentParams()));
-      ISLAND_PROFILES[name] = params;
-      DEFAULTS[name] = JSON.parse(JSON.stringify(params));
-
-      const customs = loadCustomProfiles();
-      customs[name] = params;
-      saveCustomProfiles(customs);
-
-      buildStyleOptions(name);
-      buildSliders();
-      updateShape();
-      copyMsg.textContent = "Saved!";
-      copyMsg.className = "copied";
-      setTimeout(() => { copyMsg.textContent = ""; }, 1500);
-    });
-
-    // Delete custom profile
-    deleteBtn.addEventListener("click", () => {
-      const name = currentStyle();
-      if (BUILTIN_NAMES.has(name)) return;
-
-      delete ISLAND_PROFILES[name];
-      delete DEFAULTS[name];
-
-      const customs = loadCustomProfiles();
-      delete customs[name];
-      saveCustomProfiles(customs);
-
-      buildStyleOptions("flower5");
-      buildSliders();
-      updateShape();
-      copyMsg.textContent = "Deleted!";
-      setTimeout(() => { copyMsg.textContent = ""; }, 1500);
-    });
-
-    copyBtn.addEventListener("click", () => {
-      const text = Object.entries(currentParams())
-        .map(([k, v]) => `${k}: ${typeof v === "number" ? v.toFixed(2) : v}`)
-        .join(", ");
-      navigator.clipboard.writeText(text).then(() => {
-        copyMsg.textContent = "Copied!";
-        copyMsg.className = "copied";
-        setTimeout(() => copyMsg.textContent = "", 1500);
-      });
-    });
-
-    document.getElementById("export-btn").addEventListener("click", () => {
-      const d = buildRadialIslandPath(0.5, 0.5, currentParams());
-      const svg = [
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.15 -0.15 1.3 1.3" width="800" height="800">`,
-        `<path d="${gridPath.getAttribute("d")}" stroke="#e0e0e0" stroke-width="0.003" fill="none"/>`,
-        `<rect x="0" y="0" width="1" height="1" fill="none" stroke="#aaa" stroke-width="0.006"/>`,
-        `<path d="${d}" fill="rgba(0,0,0,0.1)" stroke="#000" stroke-width="0.008"/>`,
-        `</svg>`
-      ].join("");
-
-      const blob = new Blob([svg], { type: "image/svg+xml" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `island-${currentStyle()}.svg`;
-      a.click();
-      URL.revokeObjectURL(url);
-    });
-
-    buildStyleOptions();
-    buildSliders();
-    updateShape();
   </script>
 </body>
 </html>
