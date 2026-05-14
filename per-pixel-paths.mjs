@@ -4,6 +4,7 @@
 
 import { key, unkey, fmt } from './pixel-paths.mjs';
 import { mulberry32 } from './util/prng.mjs';
+import { innerFilletAt } from './util/inner-fillet.mjs';
 import { ISLAND_PROFILES, buildRadialIslandPath } from './island-profiles.mjs';
 
 // Map a normalized (u,v) point in "tip-up" space to actual pixel coords
@@ -506,28 +507,24 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
       // Edge bowing is suppressed at inner corner vertices (above), so
       // the adjacent pixel edges remain straight where fills attach.
       if (hasL && hasU && !allPixels.has(key(x - 1, y - 1))) {
-        // TL inner at vertex (x, y)
         const jcx = jiggle > 0 ? (vtxHash(x, y, 1) - 0.5) * jiggle * ri : 0;
         const jcy = jiggle > 0 ? (vtxHash(x, y, 2) - 0.5) * jiggle * ri : 0;
-        path += ` M${fmt(x)},${fmt(y - ri)}q${fmt(jcx)},${fmt(ri + jcy)},${nrif},${rif}h${rif}z`;
+        path += " " + innerFilletAt(x, y, "tl", ri, { jcx, jcy });
       }
       if (hasR && hasU && !allPixels.has(key(x + 1, y - 1))) {
-        // TR inner at vertex (x+1, y)
         const jcx = jiggle > 0 ? (vtxHash(x + 1, y, 1) - 0.5) * jiggle * ri : 0;
         const jcy = jiggle > 0 ? (vtxHash(x + 1, y, 2) - 0.5) * jiggle * ri : 0;
-        path += ` M${fmt(x + 1 + ri)},${fmt(y)}q${fmt(-ri + jcx)},${fmt(jcy)},${nrif},${nrif}v${rif}z`;
+        path += " " + innerFilletAt(x + 1, y, "tr", ri, { jcx, jcy });
       }
       if (hasR && hasD && !allPixels.has(key(x + 1, y + 1))) {
-        // BR inner at vertex (x+1, y+1)
         const jcx = jiggle > 0 ? (vtxHash(x + 1, y + 1, 1) - 0.5) * jiggle * ri : 0;
         const jcy = jiggle > 0 ? (vtxHash(x + 1, y + 1, 2) - 0.5) * jiggle * ri : 0;
-        path += ` M${fmt(x + 1)},${fmt(y + 1 + ri)}q${fmt(jcx)},${fmt(-ri + jcy)},${rif},${nrif}h${nrif}z`;
+        path += " " + innerFilletAt(x + 1, y + 1, "br", ri, { jcx, jcy });
       }
       if (hasL && hasD && !allPixels.has(key(x - 1, y + 1))) {
-        // BL inner at vertex (x, y+1)
         const jcx = jiggle > 0 ? (vtxHash(x, y + 1, 1) - 0.5) * jiggle * ri : 0;
         const jcy = jiggle > 0 ? (vtxHash(x, y + 1, 2) - 0.5) * jiggle * ri : 0;
-        path += ` M${fmt(x - ri)},${fmt(y + 1)}q${fmt(ri + jcx)},${fmt(jcy)},${rif},${rif}v${nrif}z`;
+        path += " " + innerFilletAt(x, y + 1, "bl", ri, { jcx, jcy });
       }
     }
     // Diagonal connections: bridge two diagonally adjacent pixels with two
@@ -553,35 +550,9 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
   // --- Pass 2: tangent-continuous inner fillets for full-radius L-corners ---
   // When a neighbor has a full-radius arc (R=1), the arc extends past the grid
   // line, so the fillet endpoint shifts to the arc-line intersection.
-  // findEdge computes that intersection + tangent; buildFillet solves for the
-  // quadratic Bézier control point satisfying both tangent constraints.
+  // innerFilletAt (from util/inner-fillet.mjs) handles both the simple case
+  // and the arc-intersection case with tangent-continuous Bézier control points.
   if (needsTwoPass) {
-    function findEdge(line, cx, cy, R, sign, isHoriz) {
-      if (isHoriz) {
-        const dy = line - cy;
-        const dx = sign * Math.sqrt(Math.max(0, R * R - dy * dy));
-        const len = Math.hypot(dx, dy);
-        return { px: cx + dx, py: line, tx: dy / len, ty: -dx / len };
-      } else {
-        const dx = line - cx;
-        const dy = sign * Math.sqrt(Math.max(0, R * R - dx * dx));
-        const len = Math.hypot(dx, dy);
-        return { px: line, py: cy + dy, tx: dy / len, ty: -dx / len };
-      }
-    }
-    function buildFilletPath(ax, ay, tax, tay, bx, by, tbx, tby, vx, vy) {
-      const det = tax * (-tby) - (-tbx) * tay;
-      let cpx, cpy;
-      if (Math.abs(det) < 1e-10) {
-        cpx = (ax + bx) / 2; cpy = (ay + by) / 2;
-      } else {
-        const alpha = ((bx - ax) * (-tby) - (-tbx) * (by - ay)) / det;
-        cpx = ax + alpha * tax;
-        cpy = ay + alpha * tay;
-      }
-      return `M${fmt(ax)},${fmt(ay)}Q${fmt(cpx)},${fmt(cpy)},${fmt(bx)},${fmt(by)}L${fmt(vx)},${fmt(vy)}Z`;
-    }
-
     const fillets = [];
     for (const [x, y] of sorted) {
       const hasL = allPixels.has(key(x - 1, y));
@@ -591,83 +562,35 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
 
       // Inner TL at vertex (x, y)
       if (hasL && hasU && !allPixels.has(key(x - 1, y - 1))) {
-        const upperInfo = cornerInfoMap.get(key(x, y - 1));
-        const leftInfo = cornerInfoMap.get(key(x - 1, y));
-        const Ra = upperInfo?.tl ?? ro;
-        const Rb = leftInfo?.tl ?? ro;
-        if (Ra <= ro && Rb <= ro) {
-          const jcx = jiggle > 0 ? (vtxHash(x, y, 1) - 0.5) * jiggle * ri : 0;
-          const jcy = jiggle > 0 ? (vtxHash(x, y, 2) - 0.5) * jiggle * ri : 0;
-          fillets.push(`M${fmt(x)},${fmt(y - ri)}q${fmt(jcx)},${fmt(ri + jcy)},${nrif},${rif}h${rif}z`);
-        } else {
-          const eA = Ra > ro
-            ? findEdge(y - ri, x + Ra, (y - 1) + Ra, Ra, -1, true)
-            : { px: x, py: y - ri, tx: 0, ty: 1 };
-          const eB = Rb > ro
-            ? findEdge(x - ri, (x - 1) + Rb, y + Rb, Rb, -1, false)
-            : { px: x - ri, py: y, tx: -1, ty: 0 };
-          fillets.push(buildFilletPath(eA.px, eA.py, eA.tx, eA.ty, eB.px, eB.py, eB.tx, eB.ty, x, y));
-        }
+        const Ra = cornerInfoMap.get(key(x, y - 1))?.tl ?? ro;
+        const Rb = cornerInfoMap.get(key(x - 1, y))?.tl ?? ro;
+        const jcx = Ra <= ro && Rb <= ro && jiggle > 0 ? (vtxHash(x, y, 1) - 0.5) * jiggle * ri : 0;
+        const jcy = Ra <= ro && Rb <= ro && jiggle > 0 ? (vtxHash(x, y, 2) - 0.5) * jiggle * ri : 0;
+        fillets.push(innerFilletAt(x, y, "tl", ri, { Ra, Rb, ro, jcx, jcy }));
       }
       // Inner TR at vertex (x+1, y)
       if (hasR && hasU && !allPixels.has(key(x + 1, y - 1))) {
-        const upperInfo = cornerInfoMap.get(key(x, y - 1));
-        const rightInfo = cornerInfoMap.get(key(x + 1, y));
-        const Ra = upperInfo?.tr ?? ro;
-        const Rb = rightInfo?.tr ?? ro;
-        if (Ra <= ro && Rb <= ro) {
-          const jcx = jiggle > 0 ? (vtxHash(x + 1, y, 1) - 0.5) * jiggle * ri : 0;
-          const jcy = jiggle > 0 ? (vtxHash(x + 1, y, 2) - 0.5) * jiggle * ri : 0;
-          fillets.push(`M${fmt(x + 1 + ri)},${fmt(y)}q${fmt(-ri + jcx)},${fmt(jcy)},${nrif},${nrif}v${rif}z`);
-        } else {
-          const eA = Ra > ro
-            ? findEdge(y - ri, x + 1 - Ra, (y - 1) + Ra, Ra, +1, true)
-            : { px: x + 1, py: y - ri, tx: 0, ty: 1 };
-          const eB = Rb > ro
-            ? findEdge(x + 1 + ri, (x + 2) - Rb, y + Rb, Rb, -1, false)
-            : { px: x + 1 + ri, py: y, tx: -1, ty: 0 };
-          fillets.push(buildFilletPath(eA.px, eA.py, eA.tx, eA.ty, eB.px, eB.py, eB.tx, eB.ty, x + 1, y));
-        }
+        const Ra = cornerInfoMap.get(key(x, y - 1))?.tr ?? ro;
+        const Rb = cornerInfoMap.get(key(x + 1, y))?.tr ?? ro;
+        const jcx = Ra <= ro && Rb <= ro && jiggle > 0 ? (vtxHash(x + 1, y, 1) - 0.5) * jiggle * ri : 0;
+        const jcy = Ra <= ro && Rb <= ro && jiggle > 0 ? (vtxHash(x + 1, y, 2) - 0.5) * jiggle * ri : 0;
+        fillets.push(innerFilletAt(x + 1, y, "tr", ri, { Ra, Rb, ro, jcx, jcy }));
       }
       // Inner BR at vertex (x+1, y+1)
       if (hasR && hasD && !allPixels.has(key(x + 1, y + 1))) {
-        const lowerInfo = cornerInfoMap.get(key(x, y + 1));
-        const rightInfo = cornerInfoMap.get(key(x + 1, y));
-        const Ra = lowerInfo?.br ?? ro;
-        const Rb = rightInfo?.br ?? ro;
-        if (Ra <= ro && Rb <= ro) {
-          const jcx = jiggle > 0 ? (vtxHash(x + 1, y + 1, 1) - 0.5) * jiggle * ri : 0;
-          const jcy = jiggle > 0 ? (vtxHash(x + 1, y + 1, 2) - 0.5) * jiggle * ri : 0;
-          fillets.push(`M${fmt(x + 1)},${fmt(y + 1 + ri)}q${fmt(jcx)},${fmt(-ri + jcy)},${rif},${nrif}h${nrif}z`);
-        } else {
-          const eA = Ra > ro
-            ? findEdge(y + 1 + ri, x + 1 - Ra, (y + 2) - Ra, Ra, +1, true)
-            : { px: x + 1, py: y + 1 + ri, tx: 0, ty: -1 };
-          const eB = Rb > ro
-            ? findEdge(x + 1 + ri, (x + 2) - Rb, y + 1 - Rb, Rb, +1, false)
-            : { px: x + 1 + ri, py: y + 1, tx: 1, ty: 0 };
-          fillets.push(buildFilletPath(eA.px, eA.py, eA.tx, eA.ty, eB.px, eB.py, eB.tx, eB.ty, x + 1, y + 1));
-        }
+        const Ra = cornerInfoMap.get(key(x, y + 1))?.br ?? ro;
+        const Rb = cornerInfoMap.get(key(x + 1, y))?.br ?? ro;
+        const jcx = Ra <= ro && Rb <= ro && jiggle > 0 ? (vtxHash(x + 1, y + 1, 1) - 0.5) * jiggle * ri : 0;
+        const jcy = Ra <= ro && Rb <= ro && jiggle > 0 ? (vtxHash(x + 1, y + 1, 2) - 0.5) * jiggle * ri : 0;
+        fillets.push(innerFilletAt(x + 1, y + 1, "br", ri, { Ra, Rb, ro, jcx, jcy }));
       }
       // Inner BL at vertex (x, y+1)
       if (hasL && hasD && !allPixels.has(key(x - 1, y + 1))) {
-        const lowerInfo = cornerInfoMap.get(key(x, y + 1));
-        const leftInfo = cornerInfoMap.get(key(x - 1, y));
-        const Ra = lowerInfo?.bl ?? ro;
-        const Rb = leftInfo?.bl ?? ro;
-        if (Ra <= ro && Rb <= ro) {
-          const jcx = jiggle > 0 ? (vtxHash(x, y + 1, 1) - 0.5) * jiggle * ri : 0;
-          const jcy = jiggle > 0 ? (vtxHash(x, y + 1, 2) - 0.5) * jiggle * ri : 0;
-          fillets.push(`M${fmt(x - ri)},${fmt(y + 1)}q${fmt(ri + jcx)},${fmt(jcy)},${rif},${rif}v${nrif}z`);
-        } else {
-          const eA = Ra > ro
-            ? findEdge(y + 1 + ri, x + Ra, (y + 2) - Ra, Ra, -1, true)
-            : { px: x, py: y + 1 + ri, tx: 0, ty: -1 };
-          const eB = Rb > ro
-            ? findEdge(x - ri, (x - 1) + Rb, y + 1 - Rb, Rb, +1, false)
-            : { px: x - ri, py: y + 1, tx: 1, ty: 0 };
-          fillets.push(buildFilletPath(eA.px, eA.py, eA.tx, eA.ty, eB.px, eB.py, eB.tx, eB.ty, x, y + 1));
-        }
+        const Ra = cornerInfoMap.get(key(x, y + 1))?.bl ?? ro;
+        const Rb = cornerInfoMap.get(key(x - 1, y))?.bl ?? ro;
+        const jcx = Ra <= ro && Rb <= ro && jiggle > 0 ? (vtxHash(x, y + 1, 1) - 0.5) * jiggle * ri : 0;
+        const jcy = Ra <= ro && Rb <= ro && jiggle > 0 ? (vtxHash(x, y + 1, 2) - 0.5) * jiggle * ri : 0;
+        fillets.push(innerFilletAt(x, y + 1, "bl", ri, { Ra, Rb, ro, jcx, jcy }));
       }
     }
     return { path: paths.join(" "), fillets: fillets.join(" ") };
