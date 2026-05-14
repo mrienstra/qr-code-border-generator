@@ -100,9 +100,13 @@ export function generateSvg(qrPath, decorationPaths, layout, {
       `    </filter>`,
     );
   }
+  // Wrap content in a translate group so paths can use integer grid coordinates
+  // (avoids floating-point precision issues from fractional qrOrigin offsets)
+  const tx = fmt(layout.qrOrigin), ty = fmt(layout.qrOrigin);
   lines.push(
     `  </defs>`,
     `  <g clip-path="url(#border-clip)"${wobbleFilter ? ' filter="url(#wobble)"' : ''}>`,
+    `  <g transform="translate(${tx},${ty})">`,
     `    <path data-step="0" d="${qrPath}" fill="${fgColor}"/>`,
   );
   for (const [label, pathD, color, step] of decorationPaths) {
@@ -112,6 +116,7 @@ export function generateSvg(qrPath, decorationPaths, layout, {
   if (filletPath) {
     lines.push(`    <path d="${filletPath}" fill="${fgColor}"/>`);
   }
+  lines.push(`  </g>`);
   lines.push(`  </g>`);
   if (border2Color !== null) {
     lines.push(

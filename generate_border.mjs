@@ -179,7 +179,8 @@ export function generate(svgText, {
   const layout = computeLayout(qrSize, circleRatio, strokeWidth, borderShape, cornerRadius, snapRadius);
   layout.gap = gap;
 
-  const qrSvg = offsetToSvg(qr, layout.qrOrigin, layout.qrOrigin);
+  // Keep pixels in integer grid coordinates; qrOrigin translate is applied in SVG output
+  const qrSvg = new Set(qr);
 
   const allGroups = [];
   if (!noFluff) {
@@ -188,6 +189,9 @@ export function generate(svgText, {
   layout.flankInsetNoFinder = -effectiveFlankGap;
   layout.flankGap = effectiveFlankGap;
   layout.fillDiagonal = (effectiveFlankGap === 0);
+
+  // Grid-space layout: qrOrigin=0 so all pixel offsets stay integer
+  const gridLayout = { ...layout, qrOrigin: 0 };
 
   // Compute flanking reps needed to fill corners at current size ratio.
   // Top/left groups trim both edges -> narrower center (starts at col FINDER_ZONE).
@@ -214,10 +218,10 @@ export function generate(svgText, {
   }
 
   allGroups.push(
-    ["top", makeTopGroup(fluffQr, layout, repsSymm)],
-    ["bottom", makeBottomGroup(fluffQr, layout, repsAsymInset, repsAsymNoInset)],
-    ["left", makeLeftGroup(fluffQr, layout, repsSymm)],
-    ["right", makeRightGroup(fluffQr, layout, repsAsymInset, repsAsymNoInset)],
+    ["top", makeTopGroup(fluffQr, gridLayout, repsSymm)],
+    ["bottom", makeBottomGroup(fluffQr, gridLayout, repsAsymInset, repsAsymNoInset)],
+    ["left", makeLeftGroup(fluffQr, gridLayout, repsSymm)],
+    ["right", makeRightGroup(fluffQr, gridLayout, repsAsymInset, repsAsymNoInset)],
   );
 
   // Random fluff: randomly keep ~50% of pixels using a per-position hash.
@@ -226,10 +230,9 @@ export function generate(svgText, {
   if (randFluff) {
     let baseSeed = 0;
     for (const k of qr) { const [c, r] = unkey(k); baseSeed = (baseSeed * 31 + c * 997 + r) >>> 0; }
-    const ox = layout.qrOrigin;
-    function positionRand(svgX, svgY) {
-      const gx = Math.round(svgX - ox);
-      const gy = Math.round(svgY - ox);
+    function positionRand(gridX, gridY) {
+      const gx = Math.round(gridX);
+      const gy = Math.round(gridY);
       const s = (baseSeed + gx * 374761393 + gy * 668265263) >>> 0;
       return mulberry32(s)();
     }
@@ -300,13 +303,14 @@ export function generate(svgText, {
 
   // Remove fluff pixels that overlap with the second border's stroke area
   if (border2Color !== null && border2Trim) {
+    const qrO = layout.qrOrigin;
     for (const [, group] of allGroups) {
       for (let i = 0; i < group.length; i++) {
         const [label, svgSquares] = group[i];
         const filtered = new Set();
         for (const k of svgSquares) {
           const [x, y] = unkey(k);
-          if (!pixelOverlapsStroke(x, y, layout, border2Offset, border2Width)) {
+          if (!pixelOverlapsStroke(x + qrO, y + qrO, layout, border2Offset, border2Width)) {
             filtered.add(k);
           }
         }
@@ -331,7 +335,6 @@ export function generate(svgText, {
   // Grid gap: when randFluff is on with flankGap > 0, remove pixels on grid lines
   // that extend the QR gap border outward, creating a '#' pattern instead of tile-based gaps.
   if (randFluff && flankGap > 0) {
-    const ox = layout.qrOrigin;
     const leftVMin = -flankGap, leftVMax = -1;
     const rightVMin = qrSize, rightVMax = qrSize + flankGap - 1;
     for (const [, group] of allGroups) {
@@ -340,10 +343,8 @@ export function generate(svgText, {
         const filtered = new Set();
         for (const k of svgSquares) {
           const [x, y] = unkey(k);
-          const gx = Math.round(x - ox);
-          const gy = Math.round(y - ox);
-          if ((gx >= leftVMin && gx <= leftVMax) || (gx >= rightVMin && gx <= rightVMax)) continue;
-          if ((gy >= leftVMin && gy <= leftVMax) || (gy >= rightVMin && gy <= rightVMax)) continue;
+          if ((x >= leftVMin && x <= leftVMax) || (x >= rightVMin && x <= rightVMax)) continue;
+          if ((y >= leftVMin && y <= leftVMax) || (y >= rightVMin && y <= rightVMax)) continue;
           filtered.add(k);
         }
         group[i] = [label, filtered];
@@ -372,35 +373,26 @@ export function generate(svgText, {
 
     // Diagnostic: check for adjacency mismatches (floating-point key issues)
     if (colorful) {
-      const qrO = layout.qrOrigin;
       let issues = 0;
       for (const k of allPixels) {
         const [x, y] = unkey(k);
-        // Check all 4 cardinal neighbors: if a pixel exists at (x+/-1,y) or (x,y+/-1),
-        // verify the adjacency is symmetric (neighbor's reverse lookup finds us)
         for (const [dx, dy, dir] of [[1,0,'R'],[-1,0,'L'],[0,1,'D'],[0,-1,'U']]) {
           const nk = key(x + dx, y + dy);
           if (allPixels.has(nk)) {
             const [nx, ny] = unkey(nk);
             const backKey = key(nx - dx, ny - dy);
             if (backKey !== k) {
-              const gx = Math.round(x - qrO), gy = Math.round(y - qrO);
-              console.warn(`ADJACENCY MISMATCH at grid (${gx},${gy}) dir=${dir}: key=${k} → neighbor=${nk} → back=${backKey} (expected ${k})`);
+              console.warn(`ADJACENCY MISMATCH at grid (${x},${y}) dir=${dir}: key=${k} → neighbor=${nk} → back=${backKey} (expected ${k})`);
               issues++;
             }
           }
         }
-        // Also check: does re-keying our own coords match?
         const reKey = key(x, y);
         if (reKey !== k) {
-          const gx = Math.round(x - qrO), gy = Math.round(y - qrO);
-          console.warn(`KEY ROUND-TRIP MISMATCH at grid (${gx},${gy}): stored=${k} reKey=${reKey}`);
+          console.warn(`KEY ROUND-TRIP MISMATCH at grid (${x},${y}): stored=${k} reKey=${reKey}`);
           issues++;
         }
       }
-      // Check for near-miss adjacencies: pixels that are ~1 apart but whose
-      // snapped keys don't match as neighbors. Only reports issues that snap()
-      // can't fix (gaps > 1e-4 off from 1.0).
       const byRow = new Map();
       for (const k of allPixels) {
         const [x, y] = unkey(k);
@@ -413,11 +405,10 @@ export function generate(svgText, {
         for (let i = 0; i < row.length - 1; i++) {
           const [x1, k1] = row[i];
           const [x2, k2] = row[i + 1];
-          const gap = x2 - x1;
-          if (gap > 0.999 && gap < 1.001 && Math.abs(gap - 1) > 1e-4) {
-            const gx1 = Math.round(x1 - qrO), gx2 = Math.round(x2 - qrO);
-            const gy = Math.round(Number(yk) - qrO);
-            console.warn(`NEAR-MISS at row ${gy}: grid cols ${gx1}→${gx2}, gap=${gap} (keys: ${k1} → ${k2})`);
+          const gapD = x2 - x1;
+          if (gapD > 0.999 && gapD < 1.001 && Math.abs(gapD - 1) > 1e-4) {
+            const gy = Math.round(Number(yk));
+            console.warn(`NEAR-MISS at row ${gy}: grid cols ${x1}→${x2}, gap=${gapD} (keys: ${k1} → ${k2})`);
             issues++;
           }
         }
@@ -435,7 +426,7 @@ export function generate(svgText, {
   let finderBarGroups = [];
   let qrSvgForMain = qrSvg;
   if (finderRing !== "solid" && allPixels) {
-    const o = layout.qrOrigin;
+    const o = 0; // pixels are in grid coords; SVG offset applied via transform
     const finderCorners = [[0, 0], [qrSize - 7, 0], [0, qrSize - 7]];
     const finderOuterKeys = new Set();
     for (const [fc, fr] of finderCorners) {
@@ -564,7 +555,7 @@ export function generate(svgText, {
 
   // Finder center split: render 3x3 center as cross+corners, scatter, random, or mix
   if (finderCenter !== "solid" && allPixels) {
-    const o = layout.qrOrigin;
+    const o = 0; // pixels are in grid coords; SVG offset applied via transform
     const finderCorners = [[0, 0], [qrSize - 7, 0], [0, qrSize - 7]];
     const centerKeys = new Set();
     // Mix mode: finderCenter is an object of { pattern: weight }
