@@ -51,6 +51,7 @@ export function initProfileEditor({
   const saveNameInput = document.getElementById("save-name");
   const saveBtn = document.getElementById("save-btn");
   const deleteBtn = document.getElementById("delete-btn");
+  const pasteInput = document.querySelector(".paste-input");
 
   // --- Grid ---
   const g = document.getElementById("grid");
@@ -108,6 +109,34 @@ export function initProfileEditor({
     }
   }
 
+  // --- Save row state ---
+  function updateSaveRow() {
+    const style = currentStyle();
+    const isCustom = !BUILTIN_NAMES.has(style);
+    // Pre-populate name input with current custom style name
+    saveNameInput.value = isCustom ? style : "";
+    deleteBtn.style.display = isCustom ? "" : "none";
+    updateSaveBtn();
+  }
+
+  function updateSaveBtn() {
+    const name = saveNameInput.value.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+    const customs = loadCustomProfiles();
+    const existing = name && customs[name];
+    saveBtn.textContent = existing ? "Update save" : "Save to browser";
+
+    // Disable when empty, builtin name, or saved version is identical
+    let disabled = !name || BUILTIN_NAMES.has(name);
+    if (!disabled && existing) {
+      const current = currentParams();
+      disabled = Object.keys(current).length === Object.keys(existing).length &&
+        Object.entries(current).every(([k, v]) => existing[k] === v);
+    }
+    saveBtn.disabled = disabled;
+  }
+
+  saveNameInput.addEventListener("input", updateSaveBtn);
+
   // --- Shape + code output ---
   function updateShape() {
     const style = currentStyle();
@@ -118,7 +147,7 @@ export function initProfileEditor({
       .map(([k, v]) => `${k}: ${formatValue(k, v)}`)
       .join(", ");
 
-    deleteBtn.style.display = !BUILTIN_NAMES.has(style) ? "" : "none";
+    updateSaveRow();
   }
 
   // --- Sliders ---
@@ -185,18 +214,20 @@ export function initProfileEditor({
     if (!name) { flashMsg("Enter a name"); return; }
     if (BUILTIN_NAMES.has(name)) { flashMsg("Can't overwrite built-in"); return; }
 
+    const customs = loadCustomProfiles();
+    const isUpdate = !!customs[name];
+
     const params = JSON.parse(JSON.stringify(currentParams()));
     profiles[name] = params;
     DEFAULTS[name] = JSON.parse(JSON.stringify(params));
 
-    const customs = loadCustomProfiles();
     customs[name] = params;
     saveCustomProfiles(customs);
 
     buildStyleOptions(name);
     buildSliders();
     updateShape();
-    flashMsg("Saved!", "copied");
+    flashMsg(isUpdate ? "Updated!" : "Saved!", "copied");
   });
 
   deleteBtn.addEventListener("click", () => {
@@ -223,6 +254,24 @@ export function initProfileEditor({
     navigator.clipboard.writeText(text).then(() => {
       flashMsg("Copied!", "copied");
     });
+  });
+
+  pasteInput.addEventListener("input", () => {
+    const text = pasteInput.value;
+    if (!text.includes(":") && !text.includes("=")) return;
+    pasteInput.value = "";
+    pasteInput.blur();
+
+    const params = currentParams();
+    for (const part of text.split(",")) {
+      const m = part.match(/^\s*(\w+)\s*[:=]\s*(.+?)\s*$/);
+      if (!m) continue;
+      const [, k, v] = m;
+      if (k in params) params[k] = parseFloat(v);
+    }
+    buildSliders();
+    updateShape();
+    flashMsg("Pasted!", "copied");
   });
 
   document.getElementById("export-btn").addEventListener("click", () => {
