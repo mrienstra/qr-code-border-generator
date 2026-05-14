@@ -156,6 +156,7 @@ const GENERATE_DEFAULTS = {
   wobbleScale: 0,
   noFluff: false,
   finderSplit: false,
+  finderCenter: "solid",
 };
 const jiggleSlider = document.getElementById("jiggle");
 const jiggleValue = document.getElementById("jiggle-value");
@@ -166,6 +167,7 @@ const wobbleOctavesValue = document.getElementById("wobble-octaves-value");
 const wobbleScaleSlider = document.getElementById("wobble-scale");
 const wobbleScaleValue = document.getElementById("wobble-scale-value");
 const finderSplitCheckbox = document.getElementById("finder-split");
+const finderCenterSelect = document.getElementById("finder-center");
 function cdLabel(v) {
   const n = parseFloat(v);
   if (n === 0) return 'Off';
@@ -241,7 +243,7 @@ const DEFAULTS = {
   obf: "0", otl: "0", otr: "0", obl: "0", oal: "0", oeo: "0",
   obd: "0", obt: "rgba(0,0,30,0.1)",
   rp: "0", rpr: "0.3", rpri: "0.3", flc: "0", scl: "0", ct: "0", cd: "0", cdo: "default", dgo: "0", ts: "none", is: "none", rj: "0", cp: "0",
-  wf: "0", wo: "3", ws: "0", fns: "0",
+  wf: "0", wo: "3", ws: "0", fns: "0", fnc: "solid",
   dbg: "0",
 };
 
@@ -290,6 +292,7 @@ function saveToUrl() {
     rj: jiggleSlider.value,
     wf: wobbleFreqSlider.value, wo: wobbleOctavesSlider.value, ws: wobbleScaleSlider.value,
     fns: finderSplitCheckbox.checked ? "1" : "0",
+    fnc: finderCenterSelect.value,
     dbg: colorful.checked ? "1" : "0",
   };
   const params = new URLSearchParams();
@@ -407,6 +410,7 @@ function loadFromUrl() {
   if (get("wo") != null) { wobbleOctavesSlider.value = get("wo"); wobbleOctavesValue.textContent = get("wo"); }
   if (get("ws") != null) { wobbleScaleSlider.value = get("ws"); wobbleScaleValue.textContent = get("ws"); }
   if (get("fns") != null) finderSplitCheckbox.checked = get("fns") === "1";
+  if (get("fnc") != null) finderCenterSelect.value = get("fnc");
   roundedPixelsFields.style.display = roundedPixelsCheckbox.checked ? "" : "none";
   skipCheckerLCornersRow.style.display = fullLCornersCheckbox.checked ? "" : "none";
   if (get("dbg") != null) colorful.checked = get("dbg") === "1";
@@ -472,6 +476,7 @@ function redraw() {
     wobbleScale: parseFloat(wobbleScaleSlider.value),
     noFluff: noFluffCheckbox.checked,
     finderSplit: finderSplitCheckbox.checked,
+    finderCenter: finderCenterSelect.value,
   };
   // Build sparse repro options (omit values matching generate()'s defaults)
   const effectiveDefaults = {
@@ -630,6 +635,7 @@ connectDiagonalsSlider.addEventListener("input", () => {
 cdOrderSelect.addEventListener("change", redraw);
 diagOnlyCheckbox.addEventListener("change", () => redraw());
 finderSplitCheckbox.addEventListener("change", redraw);
+finderCenterSelect.addEventListener("change", redraw);
 
 function labelForStyle(name) {
   if (name === "none") return "None";

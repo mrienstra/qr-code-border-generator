@@ -156,6 +156,7 @@ export function generate(svgText, {
   wobbleScale = 0,
   noFluff = false,
   finderSplit = false,
+  finderCenter = "solid",
   customTipProfiles,
   customIslandProfiles,
 } = {}) {
@@ -355,7 +356,7 @@ export function generate(svgText, {
   const useCleanPath = cleanPathMode && !diagOnly && jiggle === 0;
   let toPath = (sq) => ({ path: squaresToPath(sq), fillets: "" });
   let allPixels = null;
-  if (useCleanPath || useContour || roundedPixels > 0 || roundedInner > 0 || finderSplit) {
+  if (useCleanPath || useContour || roundedPixels > 0 || roundedInner > 0 || finderSplit || finderCenter !== "solid") {
     allPixels = new Set(qrSvg);
     for (const [, group] of allGroups)
       for (const [, squares] of group)
@@ -451,6 +452,40 @@ export function generate(svgText, {
     }
     qrSvgForMain = new Set();
     for (const k of qrSvg) if (!finderOuterKeys.has(k)) qrSvgForMain.add(k);
+  }
+
+  // Finder center split: render 3x3 center as cross + 4 corner islands
+  if (finderCenter === "cross" && allPixels) {
+    const o = layout.qrOrigin;
+    const finderCorners = [[0, 0], [qrSize - 7, 0], [0, qrSize - 7]];
+    const centerKeys = new Set();
+    for (const [fc, fr] of finderCorners) {
+      const sx = fc + 2 + o, sy = fr + 2 + o; // top-left of 3x3
+      // Cross (+) shape: 5 pixels
+      const cross = [key(sx+1, sy), key(sx, sy+1), key(sx+1, sy+1), key(sx+2, sy+1), key(sx+1, sy+2)];
+      // 4 corner islands
+      const corners = [[sx, sy], [sx+2, sy], [sx, sy+2], [sx+2, sy+2]];
+      // Cross phantoms: all 4 corner positions
+      const crossPhantoms = new Set(corners.map(([cx, cy]) => key(cx, cy)));
+      finderBarGroups.push({ pixels: cross, phantoms: crossPhantoms });
+      // Each corner's phantoms: its 2 adjacent cross pixels
+      const cornerPhantomPairs = [
+        [key(sx+1, sy),   key(sx, sy+1)],   // TL corner neighbors: top-arm, left-arm
+        [key(sx+1, sy),   key(sx+2, sy+1)], // TR corner neighbors: top-arm, right-arm
+        [key(sx, sy+1),   key(sx+1, sy+2)], // BL corner neighbors: left-arm, bottom-arm
+        [key(sx+2, sy+1), key(sx+1, sy+2)], // BR corner neighbors: right-arm, bottom-arm
+      ];
+      for (let i = 0; i < 4; i++) {
+        const [cx, cy] = corners[i];
+        finderBarGroups.push({ pixels: [key(cx, cy)], phantoms: new Set(cornerPhantomPairs[i]) });
+      }
+      for (const k of cross) centerKeys.add(k);
+      for (const [cx, cy] of corners) centerKeys.add(key(cx, cy));
+    }
+    // Remove center pixels from main QR render
+    const prev = qrSvgForMain;
+    qrSvgForMain = new Set();
+    for (const k of prev) if (!centerKeys.has(k)) qrSvgForMain.add(k);
   }
 
   const qrResult = toPath(qrSvgForMain);
