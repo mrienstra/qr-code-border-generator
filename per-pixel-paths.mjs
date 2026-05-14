@@ -3,6 +3,7 @@
  */
 
 import { key, unkey, fmt } from './pixel-paths.mjs';
+import { mulberry32 } from './util/prng.mjs';
 import { ISLAND_PROFILES, buildRadialIslandPath } from './island-profiles.mjs';
 
 // Map a normalized (u,v) point in "tip-up" space to actual pixel coords
@@ -259,11 +260,8 @@ export function buildLobedTipPath(p, ps, profile) {
 
 // Deterministic per-vertex hash for jiggle variation and style mixing
 function vtxHash(vx, vy, ch = 0) {
-  let s = (Math.round(vx * 1e6) * 374761393 + Math.round(vy * 1e6) * 668265263 + ch * 49979693) >>> 0;
-  s |= 0; s = s + 0x6D2B79F5 | 0;
-  let t = Math.imul(s ^ s >>> 15, 1 | s);
-  t ^= t + Math.imul(t ^ t >>> 7, 61 | t);
-  return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  const s = (Math.round(vx * 1e6) * 374761393 + Math.round(vy * 1e6) * 668265263 + ch * 49979693) >>> 0;
+  return mulberry32(s)();
 }
 
 // Resolve a style parameter that may be a string or a weighted mix object.

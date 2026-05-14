@@ -8,6 +8,7 @@ import { TIP_PROFILES } from "./per-pixel-paths.mjs";
 import { parseQr, randomizeAlignmentPatterns, obfuscatePatterns, getAlignmentPositions } from "./qr-patterns.mjs";
 import { CIRCLE_RATIO, CIRCLE_MARGIN, CIRCLE_STROKE_WIDTH, computeLayout, pixelOverlapsStroke, generateSvg } from "./svg-output.mjs";
 import { ISLAND_PROFILES } from "./island-profiles.mjs";
+import { mulberry32 } from "./util/prng.mjs";
 
 // Re-export public API so existing consumers (index.html) keep working
 export { parseQr, getAlignmentPositions, computeLayout };
@@ -155,7 +156,7 @@ export function generate(svgText, {
   wobbleOctaves = 3,
   wobbleScale = 0,
   noFluff = false,
-  finderSplit = false,
+  finderRing = "solid",
   finderCenter = "solid",
   finderSeed = 0,
   customTipProfiles,
@@ -227,11 +228,8 @@ export function generate(svgText, {
     function positionRand(svgX, svgY) {
       const gx = Math.round(svgX - ox);
       const gy = Math.round(svgY - ox);
-      let s = (baseSeed + gx * 374761393 + gy * 668265263) >>> 0;
-      s |= 0; s = s + 0x6D2B79F5 | 0;
-      let t = Math.imul(s ^ s >>> 15, 1 | s);
-      t ^= t + Math.imul(t ^ t >>> 7, 61 | t);
-      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+      const s = (baseSeed + gx * 374761393 + gy * 668265263) >>> 0;
+      return mulberry32(s)();
     }
     for (const [, group] of allGroups) {
       for (let i = 0; i < group.length; i++) {
@@ -357,7 +355,7 @@ export function generate(svgText, {
   const useCleanPath = cleanPathMode && !diagOnly && jiggle === 0;
   let toPath = (sq) => ({ path: squaresToPath(sq), fillets: "" });
   let allPixels = null;
-  if (useCleanPath || useContour || roundedPixels > 0 || roundedInner > 0 || finderSplit || finderCenter !== "solid") {
+  if (useCleanPath || useContour || roundedPixels > 0 || roundedInner > 0 || finderRing !== "solid" || finderCenter !== "solid") {
     allPixels = new Set(qrSvg);
     for (const [, group] of allGroups)
       for (const [, squares] of group)
@@ -427,28 +425,56 @@ export function generate(svgText, {
     }
   }
 
-  // Finder ring split: render outer ring of each finder as 4 separate bars
+  // Seeded PRNG — shared by ring and center finder splits
+  const rand = mulberry32(finderSeed);
+
+  // Finder ring split: render outer ring of each finder as bars
   let finderBarGroups = [];
   let qrSvgForMain = qrSvg;
-  if (finderSplit && allPixels) {
+  if (finderRing !== "solid" && allPixels) {
     const o = layout.qrOrigin;
     const finderCorners = [[0, 0], [qrSize - 7, 0], [0, qrSize - 7]];
     const finderOuterKeys = new Set();
     for (const [fc, fr] of finderCorners) {
       const sx = fc + o, sy = fr + o;
-      const topRow    = Array.from({length: 7}, (_, i) => key(sx + i, sy));
-      const leftCol   = Array.from({length: 6}, (_, i) => key(sx, sy + 1 + i));
-      const rightCol  = Array.from({length: 6}, (_, i) => key(sx + 6, sy + 1 + i));
-      const bottomRow = Array.from({length: 5}, (_, i) => key(sx + 1 + i, sy + 6));
-      const bars = [
-        { pixels: topRow,    phantoms: new Set([key(sx, sy + 1),     key(sx + 6, sy + 1)]) },
-        { pixels: leftCol,   phantoms: new Set([key(sx, sy),         key(sx + 1, sy + 6)]) },
-        { pixels: rightCol,  phantoms: new Set([key(sx + 6, sy),     key(sx + 5, sy + 6)]) },
-        { pixels: bottomRow, phantoms: new Set([key(sx, sy + 6),     key(sx + 6, sy + 6)]) },
+      const segPixels = [
+        Array.from({length: 7}, (_, i) => key(sx + i, sy)),       // 0: top row
+        Array.from({length: 6}, (_, i) => key(sx, sy + 1 + i)),   // 1: left col
+        Array.from({length: 6}, (_, i) => key(sx + 6, sy + 1 + i)), // 2: right col
+        Array.from({length: 5}, (_, i) => key(sx + 1 + i, sy + 6)), // 3: bottom row
       ];
-      for (const bar of bars) {
-        for (const k of bar.pixels) finderOuterKeys.add(k);
-        finderBarGroups.push(bar);
+      // Seams: [segA, segB, phantomForA, phantomForB]
+      const seams = [
+        [0, 1, key(sx, sy + 1),     key(sx, sy)],       // TL corner
+        [0, 2, key(sx + 6, sy + 1), key(sx + 6, sy)],   // TR corner
+        [1, 3, key(sx + 1, sy + 6), key(sx, sy + 6)],   // BL corner
+        [2, 3, key(sx + 5, sy + 6), key(sx + 6, sy + 6)], // BR corner
+      ];
+      // Union-find on 4 segments
+      const parent = [0, 1, 2, 3];
+      const find = (x) => { while (parent[x] !== x) x = parent[x] = parent[parent[x]]; return x; };
+      for (const [a, b] of seams) {
+        // "split" cuts all seams; "random" cuts randomly
+        const keep = finderRing === "random" ? rand() < 0.5 : false;
+        if (keep) parent[find(a)] = find(b);
+      }
+      // Group segments by connected component
+      const groups = new Map();
+      for (let i = 0; i < 4; i++) {
+        const root = find(i);
+        if (!groups.has(root)) groups.set(root, { pixels: [], phantoms: new Set() });
+        groups.get(root).pixels.push(...segPixels[i]);
+      }
+      // Add phantoms at cut seams
+      for (const [a, b, phantomA, phantomB] of seams) {
+        if (find(a) !== find(b)) {
+          groups.get(find(a)).phantoms.add(phantomA);
+          groups.get(find(b)).phantoms.add(phantomB);
+        }
+      }
+      for (const { pixels, phantoms } of groups.values()) {
+        for (const k of pixels) finderOuterKeys.add(k);
+        finderBarGroups.push({ pixels, phantoms });
       }
     }
     qrSvgForMain = new Set();
@@ -460,9 +486,6 @@ export function generate(svgText, {
     const o = layout.qrOrigin;
     const finderCorners = [[0, 0], [qrSize - 7, 0], [0, qrSize - 7]];
     const centerKeys = new Set();
-    // Seeded PRNG (mulberry32)
-    let _s = finderSeed | 0;
-    const rand = () => { _s |= 0; _s = _s + 0x6D2B79F5 | 0; let t = Math.imul(_s ^ _s >>> 15, 1 | _s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
     // Mix mode: finderCenter is an object of { pattern: weight }
     const isMix = typeof finderCenter === "object";
     const mixEntries = isMix ? Object.entries(finderCenter).filter(([,w]) => w > 0) : null;

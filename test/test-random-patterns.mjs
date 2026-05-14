@@ -18,6 +18,7 @@ import { writeFileSync } from 'node:fs';
 import { squaresToCleanPath } from '../clean-paths.mjs';
 import { squaresToRoundedPath } from '../per-pixel-paths.mjs';
 import { classifyPixels } from '../pixel-classify.mjs';
+import { mulberry32 } from '../util/prng.mjs';
 
 // --- CLI ---
 const rawArgs = process.argv.slice(2);
@@ -33,16 +34,6 @@ const cellThreshold = Number(argVal('--cell-threshold', '30'));
 const offset = Number(argVal('--offset', '0'));
 const cdValues = argVal('--cd', '0').split(',').map(Number);
 const verbose = rawArgs.includes('--verbose');
-
-// --- PRNG (Mulberry32) ---
-function mulberry32(s) {
-  return function () {
-    s |= 0; s = s + 0x6D2B79F5 | 0;
-    let t = Math.imul(s ^ s >>> 15, 1 | s);
-    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  };
-}
 
 // --- Constants ---
 const pxPerUnit = 80;

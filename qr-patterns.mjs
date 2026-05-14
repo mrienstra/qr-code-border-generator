@@ -3,6 +3,7 @@
  */
 
 import { key, unkey, FINDER_ZONE } from "./pixel-paths.mjs";
+import { mulberry32 } from "./util/prng.mjs";
 
 // --- Core functions ---
 
@@ -21,17 +22,12 @@ export function parseQr(svgText) {
   return { squares, qrSize };
 }
 
-// --- Deterministic PRNG (mulberry32, seeded from pixel data) ---
+// --- Deterministic PRNG (seeded from pixel data) ---
 
 export function makeRng(squares) {
   let seed = 0;
   for (const k of squares) { const [c, r] = unkey(k); seed = (seed * 31 + c * 997 + r) >>> 0; }
-  return () => {
-    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
-    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
-    t ^= t + Math.imul(t ^ t >>> 7, 61 | t);
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  };
+  return mulberry32(seed);
 }
 
 // --- Alignment pattern helpers ---
@@ -78,11 +74,8 @@ export function randomizeAlignmentPatterns(squares, qrSize) {
 // --- Obfuscation (puzzle mode) ---
 
 function positionHash(col, row, baseSeed, regionId) {
-  let s = (baseSeed + col * 374761393 + row * 668265263 + regionId * 49979693) >>> 0;
-  s |= 0; s = s + 0x6D2B79F5 | 0;
-  let t = Math.imul(s ^ s >>> 15, 1 | s);
-  t ^= t + Math.imul(t ^ t >>> 7, 61 | t);
-  return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  const s = (baseSeed + col * 374761393 + row * 668265263 + regionId * 49979693) >>> 0;
+  return mulberry32(s)();
 }
 
 export function obfuscatePatterns(squares, qrSize, finderAmounts, alignAmount, darkOnly = false) {
