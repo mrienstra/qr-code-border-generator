@@ -57,6 +57,107 @@
         </div>
 
         <div class="panel">
+          <h2>Rounding</h2>
+          <div class="checkbox-row">
+            <input type="checkbox" id="rounded-pixels">
+            <label for="rounded-pixels">Rounded pixels</label>
+          </div>
+          <div id="rounded-pixels-fields" style="display:none">
+            <div class="field">
+              <label>Outer radius</label>
+              <div class="field-row">
+                <input type="range" id="rounded-radius" min="0" max="0.5" step="0.01" value="0.3">
+                <span class="range-value" id="rounded-radius-value">0.3</span>
+              </div>
+            </div>
+            <div class="field">
+              <label>Inner radius</label>
+              <div class="field-row">
+                <input type="range" id="rounded-inner" min="0" max="0.5" step="0.01" value="0.3">
+                <span class="range-value" id="rounded-inner-value">0.3</span>
+              </div>
+            </div>
+            <div class="checkbox-row">
+              <input type="checkbox" id="full-l-corners">
+              <label for="full-l-corners">Full-radius L-corners</label>
+            </div>
+            <div class="checkbox-row" id="skip-checker-l-corners-row" style="display:none; padding-left: 1.5em;">
+              <input type="checkbox" id="skip-checker-l-corners">
+              <label for="skip-checker-l-corners">Skip at diagonal neighbors</label>
+            </div>
+            <div class="checkbox-row">
+              <input type="checkbox" id="contour-mode">
+              <label for="contour-mode">Contour tracing</label>
+            </div>
+            <div class="checkbox-row">
+              <input type="checkbox" id="clean-path-mode">
+              <label for="clean-path-mode">Clean path</label>
+            </div>
+            <div class="field">
+              <label>Connect diagonals</label>
+              <div class="field-row">
+                <input type="range" id="connect-diagonals" min="0" max="5" step="0.25" value="0">
+                <span class="range-value" id="connect-diagonals-value">Off</span>
+                <select id="cd-order">
+                  <option value="default">Islands first</option>
+                  <option value="reverse">Bays first</option>
+                  <option value="random">Random</option>
+                </select>
+              </div>
+            </div>
+            <div class="checkbox-row">
+              <input type="checkbox" id="diag-only">
+              <label for="diag-only">Suppress corners at diagonals</label>
+            </div>
+            <div class="field">
+              <label>Tip style <a href="tip-editor.html" target="_blank" class="edit-link">Edit…</a></label>
+              <select id="tip-style"></select>
+            </div>
+            <div id="tip-mix-sliders" style="display:none"></div>
+            <div class="field">
+              <label>Tip base</label>
+              <div class="field-row">
+                <input type="range" id="tip-base" min="0" max="0.9" step="0.05" value="0">
+                <output id="tip-base-val">0</output>
+              </div>
+            </div>
+            <div class="field">
+              <label>Island style <a href="island-editor.html" target="_blank" class="edit-link">Edit…</a></label>
+              <select id="island-style"></select>
+            </div>
+            <div id="island-mix-sliders" style="display:none"></div>
+            <div class="field">
+              <label>Jiggle</label>
+              <div class="field-row">
+                <input type="range" id="jiggle" min="0" max="1" step="0.01" value="0">
+                <span class="range-value" id="jiggle-value">0</span>
+              </div>
+            </div>
+            <div class="field">
+              <label>Wobble freq</label>
+              <div class="field-row">
+                <input type="range" id="wobble-freq" min="0" max="0.2" step="0.001" value="0">
+                <span class="range-value" id="wobble-freq-value">0</span>
+              </div>
+            </div>
+            <div class="field">
+              <label>Wobble octaves</label>
+              <div class="field-row">
+                <input type="range" id="wobble-octaves" min="1" max="5" step="1" value="3">
+                <span class="range-value" id="wobble-octaves-value">3</span>
+              </div>
+            </div>
+            <div class="field">
+              <label>Wobble scale</label>
+              <div class="field-row">
+                <input type="range" id="wobble-scale" min="0" max="2" step="0.01" value="0">
+                <span class="range-value" id="wobble-scale-value">0</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
           <h2>Border</h2>
           <div class="field">
             <label>Border shape</label>
@@ -231,107 +332,6 @@
             <div class="field">
               <label>Overlay tint</label>
               <input type="text" id="obf-tint" value="rgba(0,0,30,0.1)">
-            </div>
-          </div>
-        </div>
-
-        <div class="panel">
-          <h2>Rounding</h2>
-          <div class="checkbox-row">
-            <input type="checkbox" id="rounded-pixels">
-            <label for="rounded-pixels">Rounded pixels</label>
-          </div>
-          <div id="rounded-pixels-fields" style="display:none">
-            <div class="field">
-              <label>Outer radius</label>
-              <div class="field-row">
-                <input type="range" id="rounded-radius" min="0" max="0.5" step="0.01" value="0.3">
-                <span class="range-value" id="rounded-radius-value">0.3</span>
-              </div>
-            </div>
-            <div class="field">
-              <label>Inner radius</label>
-              <div class="field-row">
-                <input type="range" id="rounded-inner" min="0" max="0.5" step="0.01" value="0.3">
-                <span class="range-value" id="rounded-inner-value">0.3</span>
-              </div>
-            </div>
-            <div class="checkbox-row">
-              <input type="checkbox" id="full-l-corners">
-              <label for="full-l-corners">Full-radius L-corners</label>
-            </div>
-            <div class="checkbox-row" id="skip-checker-l-corners-row" style="display:none; padding-left: 1.5em;">
-              <input type="checkbox" id="skip-checker-l-corners">
-              <label for="skip-checker-l-corners">Skip at diagonal neighbors</label>
-            </div>
-            <div class="checkbox-row">
-              <input type="checkbox" id="contour-mode">
-              <label for="contour-mode">Contour tracing</label>
-            </div>
-            <div class="checkbox-row">
-              <input type="checkbox" id="clean-path-mode">
-              <label for="clean-path-mode">Clean path</label>
-            </div>
-            <div class="field">
-              <label>Connect diagonals</label>
-              <div class="field-row">
-                <input type="range" id="connect-diagonals" min="0" max="5" step="0.25" value="0">
-                <span class="range-value" id="connect-diagonals-value">Off</span>
-                <select id="cd-order">
-                  <option value="default">Islands first</option>
-                  <option value="reverse">Bays first</option>
-                  <option value="random">Random</option>
-                </select>
-              </div>
-            </div>
-            <div class="checkbox-row">
-              <input type="checkbox" id="diag-only">
-              <label for="diag-only">Suppress corners at diagonals</label>
-            </div>
-            <div class="field">
-              <label>Tip style <a href="tip-editor.html" target="_blank" class="edit-link">Edit…</a></label>
-              <select id="tip-style"></select>
-            </div>
-            <div id="tip-mix-sliders" style="display:none"></div>
-            <div class="field">
-              <label>Tip base</label>
-              <div class="field-row">
-                <input type="range" id="tip-base" min="0" max="0.9" step="0.05" value="0">
-                <output id="tip-base-val">0</output>
-              </div>
-            </div>
-            <div class="field">
-              <label>Island style <a href="island-editor.html" target="_blank" class="edit-link">Edit…</a></label>
-              <select id="island-style"></select>
-            </div>
-            <div id="island-mix-sliders" style="display:none"></div>
-            <div class="field">
-              <label>Jiggle</label>
-              <div class="field-row">
-                <input type="range" id="jiggle" min="0" max="1" step="0.01" value="0">
-                <span class="range-value" id="jiggle-value">0</span>
-              </div>
-            </div>
-            <div class="field">
-              <label>Wobble freq</label>
-              <div class="field-row">
-                <input type="range" id="wobble-freq" min="0" max="0.2" step="0.001" value="0">
-                <span class="range-value" id="wobble-freq-value">0</span>
-              </div>
-            </div>
-            <div class="field">
-              <label>Wobble octaves</label>
-              <div class="field-row">
-                <input type="range" id="wobble-octaves" min="1" max="5" step="1" value="3">
-                <span class="range-value" id="wobble-octaves-value">3</span>
-              </div>
-            </div>
-            <div class="field">
-              <label>Wobble scale</label>
-              <div class="field-row">
-                <input type="range" id="wobble-scale" min="0" max="2" step="0.01" value="0">
-                <span class="range-value" id="wobble-scale-value">0</span>
-              </div>
             </div>
           </div>
         </div>
