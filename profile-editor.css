@@ -10,6 +10,10 @@
   --code-border: #ccc;
   --fieldset-border: #ddd;
   --legend-color: #555;
+  --svg-grid: #e8e8e8;
+  --svg-rect: #bbb;
+  --svg-shape-fill: rgba(0,0,0,0.12);
+  --svg-shape-stroke: #000;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -25,6 +29,10 @@
     --code-border: #444;
     --fieldset-border: #444;
     --legend-color: #999;
+    --svg-grid: #2e2e2e;
+    --svg-rect: #555;
+    --svg-shape-fill: rgba(255,255,255,0.12);
+    --svg-shape-stroke: #ddd;
   }
 }
 :root[data-theme="dark"] {
@@ -39,6 +47,14 @@
   --code-border: #444;
   --fieldset-border: #444;
   --legend-color: #999;
+  --svg-grid: #2e2e2e;
+  --svg-rect: #555;
+  --svg-shape-fill: rgba(255,255,255,0.12);
+  --svg-shape-stroke: #ddd;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font: 14px/1.4 system-ui, sans-serif; background: var(--bg); color: var(--fg); padding: 20px; }
@@ -52,6 +68,9 @@ h1 { font-size: 18px; margin-bottom: 12px; }
 .main { display: flex; gap: 24px; align-items: flex-start; }
 .canvas-wrap { flex-shrink: 0; }
 .canvas-wrap svg { background: var(--canvas-bg); border: 1px solid var(--canvas-border); border-radius: 4px; }
+#grid path { stroke: var(--svg-grid); }
+#canvas > rect { stroke: var(--svg-rect); }
+#shape { fill: var(--svg-shape-fill); stroke: var(--svg-shape-stroke); }
 .sliders { min-width: 260px; }
 .slider-row { margin-bottom: 8px; }
 .slider-row label { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 2px; }
