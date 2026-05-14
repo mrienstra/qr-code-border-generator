@@ -132,6 +132,34 @@
     .btn-secondary { background: var(--btn-secondary-bg); color: var(--btn-secondary-fg); }
     .btn-secondary:hover { background: var(--btn-secondary-hover); }
 
+    .repro-menu { position: relative; flex: 1; }
+    .repro-menu #repro-btn { width: 100%; }
+    .repro-menu #repro-btn::before { content: ''; position: absolute; left: 0; top: -4px; width: 100%; height: 4px; }
+    .repro-dropdown {
+      position: absolute; bottom: 100%; left: 0; right: 0;
+      background: var(--panel-bg); border: 1px solid var(--input-border);
+      border-radius: 4px; box-shadow: 0 -2px 8px var(--panel-shadow);
+      display: none; flex-direction: column;
+      margin-bottom: 4px; z-index: 10;
+    }
+    .repro-menu:hover .repro-dropdown,
+    .repro-menu.open .repro-dropdown { display: flex; }
+    .repro-item {
+      padding: 0.5rem 0.75rem; border: none; background: none;
+      text-align: left; cursor: pointer; font: inherit; color: var(--fg);
+      font-size: 0.85rem;
+    }
+    .repro-item:hover { background: var(--btn-secondary-hover); }
+    .repro-item + .repro-item { border-top: 1px solid var(--separator); }
+    .repro-paste-area { position: relative; white-space: nowrap; }
+    .repro-paste-input {
+      font: inherit; border: none; background: transparent; padding: 0; margin: 0;
+      opacity: 0; cursor: inherit; resize: none; width: 100%; height: 1.3em;
+      overflow: hidden; position: absolute; left: 0; top: 0;
+    }
+    .repro-paste-input:focus { opacity: 1; position: static; outline: none; }
+    .repro-paste-input:focus + .repro-paste-hint { opacity: 0; pointer-events: none; }
+
     .separator { border-top: 1px solid var(--separator); margin: 0.75rem 0; }
 
     .file-upload { position: relative; }
@@ -483,7 +511,21 @@
 
         <div class="btn-row">
           <button class="btn btn-primary" id="download-btn">Download SVG</button>
-          <button class="btn btn-secondary" id="copy-repro-btn">Copy repro JSON</button>
+          <div class="repro-menu" id="repro-menu">
+            <button class="btn btn-secondary" id="repro-btn">Repro JSON</button>
+            <div class="repro-dropdown">
+              <button class="repro-item" id="repro-copy">Copy</button>
+              <button class="repro-item" id="repro-download">Download</button>
+              <button class="repro-item" id="repro-open">Open file...</button>
+              <label class="repro-item repro-paste-label">
+                <span class="repro-paste-area">
+                  <textarea class="repro-paste-input" rows="1"></textarea>
+                  <span class="repro-paste-hint">Paste JSON</span>
+                </span>
+              </label>
+            </div>
+            <input type="file" id="repro-file-input" accept=".json" style="display:none">
+          </div>
         </div>
       </div>
 
@@ -553,6 +595,13 @@
     let currentSvgSource = null; // raw QR SVG text (from generator or upload)
     let currentOutputSvg = null; // bordered SVG text
     let uploadedSvg = null;
+
+    // Check sessionStorage for repro SVG (set by loadReproJson before reload)
+    const reproSvg = sessionStorage.getItem("qr-repro-svg");
+    if (reproSvg) {
+      uploadedSvg = reproSvg;
+      sessionStorage.removeItem("qr-repro-svg");
+    }
 
     // --- Elements ---
     const textInput = document.getElementById("text-input");
@@ -1308,26 +1357,109 @@
       URL.revokeObjectURL(url);
     });
 
-    // Copy repro JSON
-    const copyReproBtn = document.getElementById("copy-repro-btn");
-    copyReproBtn.addEventListener("click", async () => {
-      if (!window._lastGenerateInputs) return;
-      const json = JSON.stringify(window._lastGenerateInputs, null, 2);
+    // --- Repro JSON submenu ---
+    const reproBtn = document.getElementById("repro-btn");
+    const reproMenu = document.getElementById("repro-menu");
+    const reproCopy = document.getElementById("repro-copy");
+    const reproDownload = document.getElementById("repro-download");
+    const reproOpen = document.getElementById("repro-open");
+    const reproFileInput = document.getElementById("repro-file-input");
+    const reproPasteInput = reproMenu.querySelector(".repro-paste-input");
+
+    function flashReproBtn(msg) {
+      reproBtn.textContent = msg;
+      setTimeout(() => { reproBtn.textContent = "Repro JSON"; }, 2000);
+    }
+
+    function getReproJson() {
+      if (!window._lastGenerateInputs) return null;
+      const obj = { ...window._lastGenerateInputs, hash: location.hash };
+      return JSON.stringify(obj, null, 2);
+    }
+
+    function loadReproJson(jsonStr) {
+      try {
+        const fixture = JSON.parse(jsonStr);
+        const { svgText, options, hash } = fixture;
+        if (!svgText || !options) throw new Error("Missing svgText or options");
+
+        // Save custom profiles to localStorage
+        if (options.customTipProfiles) {
+          const existing = loadCustomProfiles("qr-custom-tip-profiles");
+          Object.assign(existing, options.customTipProfiles);
+          localStorage.setItem("qr-custom-tip-profiles", JSON.stringify(existing));
+        }
+        if (options.customIslandProfiles) {
+          const existing = loadCustomProfiles("qr-custom-island-profiles");
+          Object.assign(existing, options.customIslandProfiles);
+          localStorage.setItem("qr-custom-island-profiles", JSON.stringify(existing));
+        }
+
+        // Store SVG in sessionStorage for reload
+        sessionStorage.setItem("qr-repro-svg", svgText);
+
+        // Set URL hash from repro and reload
+        if (hash) {
+          location.hash = hash.startsWith("#") ? hash.slice(1) : hash;
+        }
+        location.reload();
+      } catch (e) {
+        flashReproBtn("Invalid JSON");
+      }
+    }
+
+    // Toggle menu on click (for touch devices)
+    reproBtn.addEventListener("click", () => {
+      reproMenu.classList.toggle("open");
+    });
+    // Close menu when clicking outside
+    document.addEventListener("click", (e) => {
+      if (!reproMenu.contains(e.target)) reproMenu.classList.remove("open");
+    });
+
+    reproCopy.addEventListener("click", async () => {
+      const json = getReproJson();
+      if (!json) return;
       try {
         await navigator.clipboard.writeText(json);
-        copyReproBtn.textContent = "Copied!";
+        flashReproBtn("Copied!");
       } catch {
-        // Fallback: download as file
-        const blob = new Blob([json], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "repro.json";
-        a.click();
-        URL.revokeObjectURL(url);
-        copyReproBtn.textContent = "Downloaded!";
+        flashReproBtn("Copy failed");
       }
-      setTimeout(() => { copyReproBtn.textContent = "Copy repro JSON"; }, 2000);
+      reproMenu.classList.remove("open");
+    });
+
+    reproDownload.addEventListener("click", () => {
+      const json = getReproJson();
+      if (!json) return;
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "repro.json";
+      a.click();
+      URL.revokeObjectURL(url);
+      flashReproBtn("Downloaded!");
+      reproMenu.classList.remove("open");
+    });
+
+    reproOpen.addEventListener("click", () => {
+      reproFileInput.click();
+    });
+    reproFileInput.addEventListener("change", () => {
+      const file = reproFileInput.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => loadReproJson(reader.result);
+      reader.readAsText(file);
+    });
+
+    reproPasteInput.addEventListener("input", () => {
+      const value = reproPasteInput.value;
+      if (!value.includes('"svgText"')) return;
+      reproPasteInput.value = "";
+      reproPasteInput.blur();
+      loadReproJson(value);
     });
 
     // --- Step animation ---
