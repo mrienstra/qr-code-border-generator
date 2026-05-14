@@ -2,10 +2,11 @@
  * Test a specific grid pattern: clean-path vs per-pixel rendered comparison.
  * Generates overlay SVG + pixel diff.
  *
- * Usage: node test/test-clean-pattern.mjs [pattern] [--overlay] [--cd 0,3,5]
+ * Usage: node test/test-clean-pattern.mjs [pattern] [--overlay] [--cd 0,3,5] [--no-flc]
  *   pattern: grid rows separated by / (e.g. "..X/XX./XXX" or "XXX./X.XX/XX.X/.XXX")
  *   --overlay: also write overlay SVG(s)
  *   --cd: comma-separated cd values to test (default: 0)
+ *   --no-flc: disable fullLCorners (enabled by default)
  */
 import { execSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
@@ -14,6 +15,7 @@ import { squaresToRoundedPath } from '../per-pixel-paths.mjs';
 
 const rawArgs = process.argv.slice(2);
 const doOverlay = rawArgs.includes("--overlay");
+const noFlc = rawArgs.includes("--no-flc");
 
 const cdIdx = rawArgs.indexOf("--cd");
 const cdValues = cdIdx !== -1 && rawArgs[cdIdx + 1]
@@ -23,7 +25,7 @@ const cdValues = cdIdx !== -1 && rawArgs[cdIdx + 1]
 // Pattern is first positional arg (not a flag and not the value after --cd)
 const flagValues = new Set();
 if (cdIdx !== -1) { flagValues.add(cdIdx); flagValues.add(cdIdx + 1); }
-rawArgs.forEach((a, i) => { if (a === '--overlay') flagValues.add(i); });
+rawArgs.forEach((a, i) => { if (a === '--overlay' || a === '--no-flc') flagValues.add(i); });
 const patternArg = rawArgs.find((a, i) => !flagValues.has(i) && !a.startsWith('--'))
   || "XXX./X.XX/XX.X/.XXX";
 
@@ -43,7 +45,7 @@ for (let r = 0; r < H; r++)
 
 const w = W + 1, h = H + 1;
 const pxW = w * 80, pxH = h * 80;
-const ro = 0.5, ri = 0.45, flc = true, scl = false;
+const ro = 0.5, ri = 0.45, flc = !noFlc, scl = false;
 
 function makeSvg(result) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w + 0.2}">
