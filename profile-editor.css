@@ -93,3 +93,9 @@ h1 { font-size: 18px; margin-bottom: 12px; }
 }
 .paste-input:focus { opacity: 1; outline: none; }
 .paste-input:focus + .paste-hint { opacity: 0; pointer-events: none; }
+@supports (appearance: base-select) {
+  select, ::picker(select) { appearance: base-select; }
+  select { background: var(--canvas-bg); color: var(--fg); border-color: var(--canvas-border); }
+  ::picker(select) { background: var(--canvas-bg); border: 1px solid var(--canvas-border); }
+  option { background: var(--canvas-bg); color: var(--fg); }
+}

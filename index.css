@@ -181,3 +181,9 @@ h1 { text-align: center; margin-bottom: 1.5rem; font-size: 1.5rem; }
     max-height: none; position: static;
   }
 }
+@supports (appearance: base-select) {
+  select, ::picker(select) { appearance: base-select; }
+  select { background: var(--input-bg); color: var(--input-fg); border-color: var(--input-border); }
+  ::picker(select) { background: var(--input-bg); border: 1px solid var(--input-border); }
+  option { background: var(--input-bg); color: var(--input-fg); }
+}
