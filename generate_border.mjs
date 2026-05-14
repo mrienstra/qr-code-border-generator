@@ -160,6 +160,7 @@ export function generate(svgText, {
   finderCenter = "solid",
   finderSeed = 0,
   finderRingSeed = 0,
+  finderRingCutProb = 0.5,
   customTipProfiles,
   customIslandProfiles,
 } = {}) {
@@ -453,7 +454,7 @@ export function generate(svgText, {
         const parent = Array.from({length: 24}, (_, i) => i);
         const find = (x) => { while (parent[x] !== x) x = parent[x] = parent[parent[x]]; return x; };
         for (let i = 0; i < 24; i++) {
-          if (ringRand() < 0.5) parent[find(i)] = find((i + 1) % 24);
+          if (ringRand() >= finderRingCutProb) parent[find(i)] = find((i + 1) % 24);
         }
         // Group pixels by connected component
         const groups = new Map();

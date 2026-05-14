@@ -159,6 +159,7 @@ const GENERATE_DEFAULTS = {
   finderCenter: "solid",
   finderSeed: 0,
   finderRingSeed: 0,
+  finderRingCutProb: 0.5,
 };
 const jiggleSlider = document.getElementById("jiggle");
 const jiggleValue = document.getElementById("jiggle-value");
@@ -175,6 +176,9 @@ const finderSeedInput = document.getElementById("finder-seed");
 const finderSeedField = document.getElementById("finder-seed-field");
 const finderRingSeedInput = document.getElementById("finder-ring-seed");
 const finderRingSeedField = document.getElementById("finder-ring-seed-field");
+const finderRingCutSlider = document.getElementById("finder-ring-cut");
+const finderRingCutValue = document.getElementById("finder-ring-cut-value");
+const finderRingCutField = document.getElementById("finder-ring-cut-field");
 function cdLabel(v) {
   const n = parseFloat(v);
   if (n === 0) return 'Off';
@@ -250,7 +254,7 @@ const DEFAULTS = {
   obf: "0", otl: "0", otr: "0", obl: "0", oal: "0", oeo: "0",
   obd: "0", obt: "rgba(0,0,30,0.1)",
   rp: "0", rpr: "0.3", rpri: "0.3", flc: "0", scl: "0", ct: "0", cd: "0", cdo: "default", dgo: "0", ts: "none", is: "none", rj: "0", cp: "0",
-  wf: "0", wo: "3", ws: "0", fnr: "solid", fnc: "solid", fsd: "0", frs: "0",
+  wf: "0", wo: "3", ws: "0", fnr: "solid", fnc: "solid", fsd: "0", frs: "0", frc: "0.5",
   dbg: "0",
 };
 
@@ -304,6 +308,7 @@ function saveToUrl() {
       : finderCenterSelect.value,
     fsd: finderSeedInput.value,
     frs: finderRingSeedInput.value,
+    frc: finderRingCutSlider.value,
     dbg: colorful.checked ? "1" : "0",
   };
   const params = new URLSearchParams();
@@ -439,9 +444,11 @@ function loadFromUrl() {
   }
   if (get("fsd") != null) finderSeedInput.value = get("fsd");
   if (get("frs") != null) finderRingSeedInput.value = get("frs");
+  if (get("frc") != null) { finderRingCutSlider.value = get("frc"); finderRingCutValue.textContent = parseFloat(get("frc")).toFixed(2); }
   { const fc = finderCenterSelect.value; const fr = finderRingSelect.value;
     finderSeedField.style.display = (fc === "random" || fc === "mix") ? "" : "none";
     finderRingSeedField.style.display = (fr === "random-split" || fr === "random") ? "" : "none";
+    finderRingCutField.style.display = fr === "random" ? "" : "none";
   }
   roundedPixelsFields.style.display = roundedPixelsCheckbox.checked ? "" : "none";
   skipCheckerLCornersRow.style.display = fullLCornersCheckbox.checked ? "" : "none";
@@ -511,6 +518,7 @@ function redraw() {
     finderCenter: finderCenterSelect.value === "mix" ? getMixWeights(finderCenterMixContainer) : finderCenterSelect.value,
     finderSeed: parseInt(finderSeedInput.value) || 0,
     finderRingSeed: parseInt(finderRingSeedInput.value) || 0,
+    finderRingCutProb: parseFloat(finderRingCutSlider.value),
   };
   // Build sparse repro options (omit values matching generate()'s defaults)
   const effectiveDefaults = {
@@ -671,6 +679,7 @@ diagOnlyCheckbox.addEventListener("change", () => redraw());
 finderRingSelect.addEventListener("change", () => {
   const fr = finderRingSelect.value;
   finderRingSeedField.style.display = (fr === "random-split" || fr === "random") ? "" : "none";
+  finderRingCutField.style.display = fr === "random" ? "" : "none";
   redraw();
 });
 finderCenterSelect.addEventListener("change", () => {
@@ -681,6 +690,10 @@ finderCenterSelect.addEventListener("change", () => {
 });
 finderSeedInput.addEventListener("input", redraw);
 finderRingSeedInput.addEventListener("input", redraw);
+finderRingCutSlider.addEventListener("input", () => {
+  finderRingCutValue.textContent = parseFloat(finderRingCutSlider.value).toFixed(2);
+  redraw();
+});
 
 function labelForStyle(name) {
   if (name === "none") return "None";
