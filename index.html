@@ -159,8 +159,15 @@
               <select id="finder-ring">
                 <option value="solid">Solid</option>
                 <option value="split">Split</option>
+                <option value="random-split">Random split</option>
                 <option value="random">Random</option>
               </select>
+            </div>
+            <div class="field" id="finder-ring-seed-field" style="display:none">
+              <label>Ring seed</label>
+              <div class="field-row">
+                <input type="number" id="finder-ring-seed" value="0" min="0" step="1">
+              </div>
             </div>
             <div class="field">
               <label>Finder center</label>
@@ -174,7 +181,7 @@
             </div>
             <div id="finder-center-mix" style="display:none"></div>
             <div class="field" id="finder-seed-field" style="display:none">
-              <label>Seed</label>
+              <label>Center seed</label>
               <div class="field-row">
                 <input type="number" id="finder-seed" value="0" min="0" step="1">
               </div>

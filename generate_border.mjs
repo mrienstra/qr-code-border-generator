@@ -159,6 +159,7 @@ export function generate(svgText, {
   finderRing = "solid",
   finderCenter = "solid",
   finderSeed = 0,
+  finderRingSeed = 0,
   customTipProfiles,
   customIslandProfiles,
 } = {}) {
@@ -425,8 +426,9 @@ export function generate(svgText, {
     }
   }
 
-  // Seeded PRNG — shared by ring and center finder splits
-  const rand = mulberry32(finderSeed);
+  // Separate seeded PRNGs for ring and center finder splits
+  const ringRand = mulberry32(finderRingSeed);
+  const centerRand = mulberry32(finderSeed);
 
   // Finder ring split: render outer ring of each finder as bars
   let finderBarGroups = [];
@@ -437,44 +439,122 @@ export function generate(svgText, {
     const finderOuterKeys = new Set();
     for (const [fc, fr] of finderCorners) {
       const sx = fc + o, sy = fr + o;
-      const segPixels = [
-        Array.from({length: 7}, (_, i) => key(sx + i, sy)),       // 0: top row
-        Array.from({length: 6}, (_, i) => key(sx, sy + 1 + i)),   // 1: left col
-        Array.from({length: 6}, (_, i) => key(sx + 6, sy + 1 + i)), // 2: right col
-        Array.from({length: 5}, (_, i) => key(sx + 1 + i, sy + 6)), // 3: bottom row
-      ];
-      // Seams: [segA, segB, phantomForA, phantomForB]
-      const seams = [
-        [0, 1, key(sx, sy + 1),     key(sx, sy)],       // TL corner
-        [0, 2, key(sx + 6, sy + 1), key(sx + 6, sy)],   // TR corner
-        [1, 3, key(sx + 1, sy + 6), key(sx, sy + 6)],   // BL corner
-        [2, 3, key(sx + 5, sy + 6), key(sx + 6, sy + 6)], // BR corner
-      ];
-      // Union-find on 4 segments
-      const parent = [0, 1, 2, 3];
-      const find = (x) => { while (parent[x] !== x) x = parent[x] = parent[parent[x]]; return x; };
-      for (const [a, b] of seams) {
-        // "split" cuts all seams; "random" cuts randomly
-        const keep = finderRing === "random" ? rand() < 0.5 : false;
-        if (keep) parent[find(a)] = find(b);
-      }
-      // Group segments by connected component
-      const groups = new Map();
-      for (let i = 0; i < 4; i++) {
-        const root = find(i);
-        if (!groups.has(root)) groups.set(root, { pixels: [], phantoms: new Set() });
-        groups.get(root).pixels.push(...segPixels[i]);
-      }
-      // Add phantoms at cut seams
-      for (const [a, b, phantomA, phantomB] of seams) {
-        if (find(a) !== find(b)) {
-          groups.get(find(a)).phantoms.add(phantomA);
-          groups.get(find(b)).phantoms.add(phantomB);
+
+      if (finderRing === "random") {
+        // Per-pixel union-find on all 24 ring pixels in clockwise order
+        // Top row L→R (7), right col top→bot excl corners (5), bottom row R→L (7), left col bot→top excl corners (5)
+        const ringPixels = [
+          ...Array.from({length: 7}, (_, i) => key(sx + i, sy)),           // 0-6: top row
+          ...Array.from({length: 5}, (_, i) => key(sx + 6, sy + 1 + i)),   // 7-11: right col (no corners)
+          ...Array.from({length: 7}, (_, i) => key(sx + 6 - i, sy + 6)),   // 12-18: bottom row R→L
+          ...Array.from({length: 5}, (_, i) => key(sx, sy + 5 - i)),       // 19-23: left col (no corners)
+        ];
+        // 24 edges in the closed ring loop
+        const parent = Array.from({length: 24}, (_, i) => i);
+        const find = (x) => { while (parent[x] !== x) x = parent[x] = parent[parent[x]]; return x; };
+        for (let i = 0; i < 24; i++) {
+          if (ringRand() < 0.5) parent[find(i)] = find((i + 1) % 24);
         }
-      }
-      for (const { pixels, phantoms } of groups.values()) {
-        for (const k of pixels) finderOuterKeys.add(k);
-        finderBarGroups.push({ pixels, phantoms });
+        // Group pixels by connected component
+        const groups = new Map();
+        for (let i = 0; i < 24; i++) {
+          const root = find(i);
+          if (!groups.has(root)) groups.set(root, []);
+          groups.get(root).push(i);
+        }
+        // Build bar group for each component
+        for (const members of groups.values()) {
+          const memberSet = new Set(members);
+          const pixels = [];
+          const phantomSet = new Set();
+          for (const idx of members) {
+            pixels.push(ringPixels[idx]);
+            // Phantom = adjacent ring pixel in a different component
+            const prev = (idx + 23) % 24, next = (idx + 1) % 24;
+            if (!memberSet.has(prev)) phantomSet.add(ringPixels[prev]);
+            if (!memberSet.has(next)) phantomSet.add(ringPixels[next]);
+          }
+          for (const k of pixels) finderOuterKeys.add(k);
+          finderBarGroups.push({ pixels, phantoms: phantomSet });
+        }
+      } else {
+        // 8-node union-find: 4 corners (TL=0,TR=1,BL=2,BR=3) + 4 bars (top=4,left=5,right=6,bottom=7)
+        // Bar pixels (excluding corners): 5 each
+        const barPixels = [
+          Array.from({length: 5}, (_, i) => key(sx + 1 + i, sy)),       // 4: top bar (cols 1-5)
+          Array.from({length: 5}, (_, i) => key(sx, sy + 1 + i)),       // 5: left bar (rows 1-5)
+          Array.from({length: 5}, (_, i) => key(sx + 6, sy + 1 + i)),   // 6: right bar (rows 1-5)
+          Array.from({length: 5}, (_, i) => key(sx + 1 + i, sy + 6)),   // 7: bottom bar (cols 1-5)
+        ];
+        const cornerPixels = [
+          key(sx, sy),       // 0: TL
+          key(sx + 6, sy),   // 1: TR
+          key(sx, sy + 6),   // 2: BL
+          key(sx + 6, sy + 6), // 3: BR
+        ];
+        // Edges: [cornerIdx, barIdx, phantomForCorner, phantomForBar]
+        // Each corner has an x-edge (horizontal to bar) and y-edge (vertical to bar)
+        const edges = [
+          // TL corner
+          [0, 4, key(sx + 1, sy),   key(sx, sy)],       // TL ↔ top (x-edge)
+          [0, 5, key(sx, sy + 1),   key(sx, sy)],       // TL ↔ left (y-edge)
+          // TR corner
+          [1, 4, key(sx + 5, sy),   key(sx + 6, sy)],   // TR ↔ top (x-edge)
+          [1, 6, key(sx + 6, sy + 1), key(sx + 6, sy)], // TR ↔ right (y-edge)
+          // BL corner
+          [2, 7, key(sx + 1, sy + 6), key(sx, sy + 6)], // BL ↔ bottom (x-edge)
+          [2, 5, key(sx, sy + 5),   key(sx, sy + 6)],   // BL ↔ left (y-edge)
+          // BR corner
+          [3, 7, key(sx + 5, sy + 6), key(sx + 6, sy + 6)], // BR ↔ bottom (x-edge)
+          [3, 6, key(sx + 6, sy + 5), key(sx + 6, sy + 6)], // BR ↔ right (y-edge)
+        ];
+        // Each corner has 2 edges: index i*2 = x-edge, i*2+1 = y-edge
+        // Decide which edges to keep based on mode
+        const parent = [0, 1, 2, 3, 4, 5, 6, 7];
+        const find = (x) => { while (parent[x] !== x) x = parent[x] = parent[parent[x]]; return x; };
+
+        for (let ci = 0; ci < 4; ci++) {
+          const xEdgeIdx = ci * 2, yEdgeIdx = ci * 2 + 1;
+          let keepX, keepY;
+          if (finderRing === "split") {
+            // Fixed split pattern: TL/TR split on y (keep x, cut y), BL/BR split on x (cut x, keep y)
+            keepX = ci < 2; // TL, TR: keep x-edge
+            keepY = ci >= 2; // BL, BR: keep y-edge
+          } else {
+            // "random-split": random choice per corner
+            const choice = Math.floor(ringRand() * 4);
+            // 0=splitY(keepX,cutY), 1=splitX(cutX,keepY), 2=splitBoth(cut,cut), 3=noSplit(keep,keep)
+            keepX = choice === 0 || choice === 3;
+            keepY = choice === 1 || choice === 3;
+          }
+          if (keepX) parent[find(edges[xEdgeIdx][0])] = find(edges[xEdgeIdx][1]);
+          if (keepY) parent[find(edges[yEdgeIdx][0])] = find(edges[yEdgeIdx][1]);
+        }
+        // Group nodes by connected component
+        const groups = new Map();
+        // Add corner pixels
+        for (let i = 0; i < 4; i++) {
+          const root = find(i);
+          if (!groups.has(root)) groups.set(root, { pixels: [], phantoms: new Set() });
+          groups.get(root).pixels.push(cornerPixels[i]);
+        }
+        // Add bar pixels
+        for (let i = 0; i < 4; i++) {
+          const root = find(i + 4);
+          if (!groups.has(root)) groups.set(root, { pixels: [], phantoms: new Set() });
+          groups.get(root).pixels.push(...barPixels[i]);
+        }
+        // Add phantoms at cut edges
+        for (const [cornerIdx, barIdx, phantomForCorner, phantomForBar] of edges) {
+          if (find(cornerIdx) !== find(barIdx)) {
+            groups.get(find(cornerIdx)).phantoms.add(phantomForCorner);
+            groups.get(find(barIdx)).phantoms.add(phantomForBar);
+          }
+        }
+        for (const { pixels, phantoms } of groups.values()) {
+          for (const k of pixels) finderOuterKeys.add(k);
+          finderBarGroups.push({ pixels, phantoms });
+        }
       }
     }
     qrSvgForMain = new Set();
@@ -494,7 +574,7 @@ export function generate(svgText, {
     for (const [fc, fr] of finderCorners) {
       let pattern;
       if (isMix && mixTotal > 0) {
-        let r = rand() * mixTotal;
+        let r = centerRand() * mixTotal;
         for (const [name, w] of mixEntries) { r -= w; if (r <= 0) { pattern = name; break; } }
         pattern = pattern || mixEntries[mixEntries.length - 1][0];
       } else {
@@ -539,7 +619,7 @@ export function generate(svgText, {
         const find = (x) => { while (parent[x] !== x) x = parent[x] = parent[parent[x]]; return x; };
         const edges = [[0,1],[1,2],[3,4],[4,5],[6,7],[7,8],[0,3],[1,4],[2,5],[3,6],[4,7],[5,8]];
         for (const [a, b] of edges) {
-          if (rand() < 0.5) parent[find(a)] = find(b);
+          if (centerRand() < 0.5) parent[find(a)] = find(b);
         }
         // Group pixels by connected component
         const groups = new Map();
