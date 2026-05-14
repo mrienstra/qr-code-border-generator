@@ -157,6 +157,7 @@ const GENERATE_DEFAULTS = {
   noFluff: false,
   finderSplit: false,
   finderCenter: "solid",
+  finderSeed: 0,
 };
 const jiggleSlider = document.getElementById("jiggle");
 const jiggleValue = document.getElementById("jiggle-value");
@@ -168,6 +169,9 @@ const wobbleScaleSlider = document.getElementById("wobble-scale");
 const wobbleScaleValue = document.getElementById("wobble-scale-value");
 const finderSplitCheckbox = document.getElementById("finder-split");
 const finderCenterSelect = document.getElementById("finder-center");
+const finderCenterMixContainer = document.getElementById("finder-center-mix");
+const finderSeedInput = document.getElementById("finder-seed");
+const finderSeedField = document.getElementById("finder-seed-field");
 function cdLabel(v) {
   const n = parseFloat(v);
   if (n === 0) return 'Off';
@@ -243,7 +247,7 @@ const DEFAULTS = {
   obf: "0", otl: "0", otr: "0", obl: "0", oal: "0", oeo: "0",
   obd: "0", obt: "rgba(0,0,30,0.1)",
   rp: "0", rpr: "0.3", rpri: "0.3", flc: "0", scl: "0", ct: "0", cd: "0", cdo: "default", dgo: "0", ts: "none", is: "none", rj: "0", cp: "0",
-  wf: "0", wo: "3", ws: "0", fns: "0", fnc: "solid",
+  wf: "0", wo: "3", ws: "0", fns: "0", fnc: "solid", fsd: "0",
   dbg: "0",
 };
 
@@ -292,7 +296,10 @@ function saveToUrl() {
     rj: jiggleSlider.value,
     wf: wobbleFreqSlider.value, wo: wobbleOctavesSlider.value, ws: wobbleScaleSlider.value,
     fns: finderSplitCheckbox.checked ? "1" : "0",
-    fnc: finderCenterSelect.value,
+    fnc: finderCenterSelect.value === "mix"
+      ? Object.entries(getMixWeights(finderCenterMixContainer)).map(([n,w]) => `${n}:${w}`).join(",") || "solid"
+      : finderCenterSelect.value,
+    fsd: finderSeedInput.value,
     dbg: colorful.checked ? "1" : "0",
   };
   const params = new URLSearchParams();
@@ -410,7 +417,24 @@ function loadFromUrl() {
   if (get("wo") != null) { wobbleOctavesSlider.value = get("wo"); wobbleOctavesValue.textContent = get("wo"); }
   if (get("ws") != null) { wobbleScaleSlider.value = get("ws"); wobbleScaleValue.textContent = get("ws"); }
   if (get("fns") != null) finderSplitCheckbox.checked = get("fns") === "1";
-  if (get("fnc") != null) finderCenterSelect.value = get("fnc");
+  if (get("fnc") != null) {
+    const fncVal = get("fnc");
+    if (fncVal.includes(":")) {
+      finderCenterSelect.value = "mix";
+      const weights = {};
+      for (const part of fncVal.split(",")) {
+        const [n, w] = part.split(":");
+        weights[n.trim()] = parseFloat(w);
+      }
+      setMixWeights(finderCenterMixContainer, weights);
+      finderCenterMixContainer.style.display = "";
+    } else {
+      finderCenterSelect.value = fncVal;
+      finderCenterMixContainer.style.display = "none";
+    }
+  }
+  if (get("fsd") != null) finderSeedInput.value = get("fsd");
+  { const fc = finderCenterSelect.value; finderSeedField.style.display = (fc === "random" || fc === "mix") ? "" : "none"; }
   roundedPixelsFields.style.display = roundedPixelsCheckbox.checked ? "" : "none";
   skipCheckerLCornersRow.style.display = fullLCornersCheckbox.checked ? "" : "none";
   if (get("dbg") != null) colorful.checked = get("dbg") === "1";
@@ -476,7 +500,8 @@ function redraw() {
     wobbleScale: parseFloat(wobbleScaleSlider.value),
     noFluff: noFluffCheckbox.checked,
     finderSplit: finderSplitCheckbox.checked,
-    finderCenter: finderCenterSelect.value,
+    finderCenter: finderCenterSelect.value === "mix" ? getMixWeights(finderCenterMixContainer) : finderCenterSelect.value,
+    finderSeed: parseInt(finderSeedInput.value) || 0,
   };
   // Build sparse repro options (omit values matching generate()'s defaults)
   const effectiveDefaults = {
@@ -635,7 +660,13 @@ connectDiagonalsSlider.addEventListener("input", () => {
 cdOrderSelect.addEventListener("change", redraw);
 diagOnlyCheckbox.addEventListener("change", () => redraw());
 finderSplitCheckbox.addEventListener("change", redraw);
-finderCenterSelect.addEventListener("change", redraw);
+finderCenterSelect.addEventListener("change", () => {
+  const fc = finderCenterSelect.value;
+  finderCenterMixContainer.style.display = fc === "mix" ? "" : "none";
+  finderSeedField.style.display = (fc === "random" || fc === "mix") ? "" : "none";
+  redraw();
+});
+finderSeedInput.addEventListener("input", redraw);
 
 function labelForStyle(name) {
   if (name === "none") return "None";
@@ -729,6 +760,10 @@ function buildIslandOptions(selected = "none") {
 }
 buildIslandOptions();
 buildMixSliders(ISLAND_PROFILES, islandMixContainer);
+
+// Finder center mix sliders
+const FINDER_CENTER_PATTERNS = { solid: {}, cross: {}, scatter: {}, random: {} };
+buildMixSliders(FINDER_CENTER_PATTERNS, finderCenterMixContainer);
 
 islandStyleSelect.addEventListener("change", () => {
   islandMixContainer.style.display = islandStyleSelect.value === "mix" ? "" : "none";

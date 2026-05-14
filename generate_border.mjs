@@ -157,6 +157,7 @@ export function generate(svgText, {
   noFluff = false,
   finderSplit = false,
   finderCenter = "solid",
+  finderSeed = 0,
   customTipProfiles,
   customIslandProfiles,
 } = {}) {
@@ -454,38 +455,103 @@ export function generate(svgText, {
     for (const k of qrSvg) if (!finderOuterKeys.has(k)) qrSvgForMain.add(k);
   }
 
-  // Finder center split: render 3x3 center as cross + 4 corner islands
-  if (finderCenter === "cross" && allPixels) {
+  // Finder center split: render 3x3 center as cross+corners, scatter, random, or mix
+  if (finderCenter !== "solid" && allPixels) {
     const o = layout.qrOrigin;
     const finderCorners = [[0, 0], [qrSize - 7, 0], [0, qrSize - 7]];
     const centerKeys = new Set();
+    // Seeded PRNG (mulberry32)
+    let _s = finderSeed | 0;
+    const rand = () => { _s |= 0; _s = _s + 0x6D2B79F5 | 0; let t = Math.imul(_s ^ _s >>> 15, 1 | _s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+    // Mix mode: finderCenter is an object of { pattern: weight }
+    const isMix = typeof finderCenter === "object";
+    const mixEntries = isMix ? Object.entries(finderCenter).filter(([,w]) => w > 0) : null;
+    const mixTotal = isMix ? mixEntries.reduce((s, [,w]) => s + w, 0) : 0;
+
     for (const [fc, fr] of finderCorners) {
-      const sx = fc + 2 + o, sy = fr + 2 + o; // top-left of 3x3
-      // Cross (+) shape: 5 pixels
-      const cross = [key(sx+1, sy), key(sx, sy+1), key(sx+1, sy+1), key(sx+2, sy+1), key(sx+1, sy+2)];
-      // 4 corner islands
-      const corners = [[sx, sy], [sx+2, sy], [sx, sy+2], [sx+2, sy+2]];
-      // Cross phantoms: all 4 corner positions
-      const crossPhantoms = new Set(corners.map(([cx, cy]) => key(cx, cy)));
-      finderBarGroups.push({ pixels: cross, phantoms: crossPhantoms });
-      // Each corner's phantoms: its 2 adjacent cross pixels
-      const cornerPhantomPairs = [
-        [key(sx+1, sy),   key(sx, sy+1)],   // TL corner neighbors: top-arm, left-arm
-        [key(sx+1, sy),   key(sx+2, sy+1)], // TR corner neighbors: top-arm, right-arm
-        [key(sx, sy+1),   key(sx+1, sy+2)], // BL corner neighbors: left-arm, bottom-arm
-        [key(sx+2, sy+1), key(sx+1, sy+2)], // BR corner neighbors: right-arm, bottom-arm
-      ];
-      for (let i = 0; i < 4; i++) {
-        const [cx, cy] = corners[i];
-        finderBarGroups.push({ pixels: [key(cx, cy)], phantoms: new Set(cornerPhantomPairs[i]) });
+      let pattern;
+      if (isMix && mixTotal > 0) {
+        let r = rand() * mixTotal;
+        for (const [name, w] of mixEntries) { r -= w; if (r <= 0) { pattern = name; break; } }
+        pattern = pattern || mixEntries[mixEntries.length - 1][0];
+      } else {
+        pattern = typeof finderCenter === "string" ? finderCenter : "solid";
       }
-      for (const k of cross) centerKeys.add(k);
-      for (const [cx, cy] of corners) centerKeys.add(key(cx, cy));
+      if (pattern === "solid") continue;
+      const sx = fc + 2 + o, sy = fr + 2 + o; // top-left of 3x3
+
+      if (pattern === "cross") {
+        const cross = [key(sx+1, sy), key(sx, sy+1), key(sx+1, sy+1), key(sx+2, sy+1), key(sx+1, sy+2)];
+        const corners = [[sx, sy], [sx+2, sy], [sx, sy+2], [sx+2, sy+2]];
+        const crossPhantoms = new Set(corners.map(([cx, cy]) => key(cx, cy)));
+        finderBarGroups.push({ pixels: cross, phantoms: crossPhantoms });
+        const cornerPhantomPairs = [
+          [key(sx+1, sy),   key(sx, sy+1)],
+          [key(sx+1, sy),   key(sx+2, sy+1)],
+          [key(sx, sy+1),   key(sx+1, sy+2)],
+          [key(sx+2, sy+1), key(sx+1, sy+2)],
+        ];
+        for (let i = 0; i < 4; i++) {
+          const [cx, cy] = corners[i];
+          finderBarGroups.push({ pixels: [key(cx, cy)], phantoms: new Set(cornerPhantomPairs[i]) });
+        }
+        for (const k of cross) centerKeys.add(k);
+        for (const [cx, cy] of corners) centerKeys.add(key(cx, cy));
+      } else if (pattern === "scatter") {
+        for (let dy = 0; dy < 3; dy++) {
+          for (let dx = 0; dx < 3; dx++) {
+            const px = sx + dx, py = sy + dy;
+            const phantomSet = new Set();
+            for (const [nx, ny] of [[px-1,py],[px+1,py],[px,py-1],[px,py+1]]) {
+              if (nx >= sx && nx < sx+3 && ny >= sy && ny < sy+3)
+                phantomSet.add(key(nx, ny));
+            }
+            finderBarGroups.push({ pixels: [key(px, py)], phantoms: phantomSet });
+            centerKeys.add(key(px, py));
+          }
+        }
+      } else if (pattern === "random") {
+        // Randomly cut/keep each internal edge, then find connected components
+        const parent = Array.from({length: 9}, (_, i) => i);
+        const find = (x) => { while (parent[x] !== x) x = parent[x] = parent[parent[x]]; return x; };
+        const edges = [[0,1],[1,2],[3,4],[4,5],[6,7],[7,8],[0,3],[1,4],[2,5],[3,6],[4,7],[5,8]];
+        for (const [a, b] of edges) {
+          if (rand() < 0.5) parent[find(a)] = find(b);
+        }
+        // Group pixels by connected component
+        const groups = new Map();
+        for (let i = 0; i < 9; i++) {
+          const root = find(i);
+          if (!groups.has(root)) groups.set(root, []);
+          groups.get(root).push(i);
+        }
+        // Build bar group for each component
+        for (const members of groups.values()) {
+          const memberSet = new Set(members);
+          const pixels = [];
+          const phantomSet = new Set();
+          for (const i of members) {
+            const dx = i % 3, dy = Math.floor(i / 3);
+            pixels.push(key(sx + dx, sy + dy));
+            centerKeys.add(key(sx + dx, sy + dy));
+            // Phantom = adjacent 3x3 pixel in a different component
+            for (const [ndx, ndy] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+              const nx = dx + ndx, ny = dy + ndy;
+              if (nx >= 0 && nx < 3 && ny >= 0 && ny < 3) {
+                const ni = ny * 3 + nx;
+                if (!memberSet.has(ni)) phantomSet.add(key(sx + nx, sy + ny));
+              }
+            }
+          }
+          finderBarGroups.push({ pixels, phantoms: phantomSet });
+        }
+      }
     }
-    // Remove center pixels from main QR render
-    const prev = qrSvgForMain;
-    qrSvgForMain = new Set();
-    for (const k of prev) if (!centerKeys.has(k)) qrSvgForMain.add(k);
+    if (centerKeys.size > 0) {
+      const prev = qrSvgForMain;
+      qrSvgForMain = new Set();
+      for (const k of prev) if (!centerKeys.has(k)) qrSvgForMain.add(k);
+    }
   }
 
   const qrResult = toPath(qrSvgForMain);
