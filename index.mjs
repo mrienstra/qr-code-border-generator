@@ -739,6 +739,34 @@ tipBaseSlider.addEventListener("input", () => {
   tipBaseValue.textContent = tipBaseSlider.value;
   redraw();
 });
+
+// Reload custom profiles when saved in another tab (e.g. tip/island editor)
+window.addEventListener("storage", (e) => {
+  if (e.key === "qr-custom-tip-profiles") {
+    // Remove old custom entries, reload fresh
+    for (const k of Object.keys(TIP_PROFILES)) {
+      if (!BUILTIN_TIP_NAMES.has(k)) delete TIP_PROFILES[k];
+    }
+    Object.assign(TIP_PROFILES, loadCustomProfiles("qr-custom-tip-profiles"));
+    buildStyleOptions(tipStyleSelect.value);
+    const tipWeights = getMixWeights(tipMixContainer);
+    buildMixSliders(TIP_PROFILES, tipMixContainer);
+    setMixWeights(tipMixContainer, tipWeights);
+    redraw();
+  }
+  if (e.key === "qr-custom-island-profiles") {
+    for (const k of Object.keys(ISLAND_PROFILES)) {
+      if (!BUILTIN_ISLAND_NAMES.has(k)) delete ISLAND_PROFILES[k];
+    }
+    Object.assign(ISLAND_PROFILES, loadCustomProfiles("qr-custom-island-profiles"));
+    buildIslandOptions(islandStyleSelect.value);
+    const islandWeights = getMixWeights(islandMixContainer);
+    buildMixSliders(ISLAND_PROFILES, islandMixContainer);
+    setMixWeights(islandMixContainer, islandWeights);
+    redraw();
+  }
+});
+
 fullLCornersCheckbox.addEventListener("change", () => {
   skipCheckerLCornersRow.style.display = fullLCornersCheckbox.checked ? "" : "none";
   redraw();
