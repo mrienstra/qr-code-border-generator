@@ -155,6 +155,7 @@ export function generate(svgText, {
   wobbleOctaves = 3,
   wobbleScale = 0,
   noFluff = false,
+  finderSplit = false,
   customTipProfiles,
   customIslandProfiles,
 } = {}) {
@@ -353,8 +354,9 @@ export function generate(svgText, {
   const useContour = contourMode && !diagOnly && jiggle === 0;
   const useCleanPath = cleanPathMode && !diagOnly && jiggle === 0;
   let toPath = (sq) => ({ path: squaresToPath(sq), fillets: "" });
-  if (useCleanPath || useContour || roundedPixels > 0 || roundedInner > 0) {
-    const allPixels = new Set(qrSvg);
+  let allPixels = null;
+  if (useCleanPath || useContour || roundedPixels > 0 || roundedInner > 0 || finderSplit) {
+    allPixels = new Set(qrSvg);
     for (const [, group] of allGroups)
       for (const [, squares] of group)
         for (const k of squares) allPixels.add(k);
@@ -362,7 +364,7 @@ export function generate(svgText, {
       toPath = (sq) => squaresToCleanPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, fullLCorners, skipCheckerLCorners, connectDiagonalsOrder);
     } else if (useContour) {
       toPath = (sq) => squaresToContourPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, fullLCorners, skipCheckerLCorners);
-    } else {
+    } else if (roundedPixels > 0 || roundedInner > 0) {
       toPath = (sq) => squaresToRoundedPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, diagOnly, jiggle, fullLCorners, skipCheckerLCorners, connectDiagonalsOrder, tipStyle, tipBase, islandStyle);
     }
 
@@ -423,7 +425,35 @@ export function generate(svgText, {
     }
   }
 
-  const qrResult = toPath(qrSvg);
+  // Finder ring split: render outer ring of each finder as 4 separate bars
+  let finderBarGroups = [];
+  let qrSvgForMain = qrSvg;
+  if (finderSplit && allPixels) {
+    const o = layout.qrOrigin;
+    const finderCorners = [[0, 0], [qrSize - 7, 0], [0, qrSize - 7]];
+    const finderOuterKeys = new Set();
+    for (const [fc, fr] of finderCorners) {
+      const sx = fc + o, sy = fr + o;
+      const topRow    = Array.from({length: 7}, (_, i) => key(sx + i, sy));
+      const leftCol   = Array.from({length: 6}, (_, i) => key(sx, sy + 1 + i));
+      const rightCol  = Array.from({length: 6}, (_, i) => key(sx + 6, sy + 1 + i));
+      const bottomRow = Array.from({length: 5}, (_, i) => key(sx + 1 + i, sy + 6));
+      const bars = [
+        { pixels: topRow,    phantoms: new Set([key(sx, sy + 1),     key(sx + 6, sy + 1)]) },
+        { pixels: leftCol,   phantoms: new Set([key(sx, sy),         key(sx + 1, sy + 6)]) },
+        { pixels: rightCol,  phantoms: new Set([key(sx + 6, sy),     key(sx + 5, sy + 6)]) },
+        { pixels: bottomRow, phantoms: new Set([key(sx, sy + 6),     key(sx + 6, sy + 6)]) },
+      ];
+      for (const bar of bars) {
+        for (const k of bar.pixels) finderOuterKeys.add(k);
+        finderBarGroups.push(bar);
+      }
+    }
+    qrSvgForMain = new Set();
+    for (const k of qrSvg) if (!finderOuterKeys.has(k)) qrSvgForMain.add(k);
+  }
+
+  const qrResult = toPath(qrSvgForMain);
   const qrPath = qrResult.path;
   let allFillets = qrResult.fillets;
 
@@ -440,6 +470,30 @@ export function generate(svgText, {
       decorationPaths.push([label, result.path, color, step]);
       if (result.fillets) allFillets += (allFillets ? " " : "") + result.fillets;
     }
+  }
+
+  // Render finder bar groups (each bar with phantom neighbor masking for rounded caps)
+  for (const { pixels, phantoms } of finderBarGroups) {
+    const barSq = new Set(pixels);
+    const proxyAllPixels = new Proxy(allPixels, {
+      get(target, prop) {
+        if (prop === "has") return (k) => !phantoms.has(k) && target.has(k);
+        const v = target[prop];
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    });
+    let barResult;
+    if (useCleanPath) {
+      barResult = squaresToCleanPath(barSq, proxyAllPixels, roundedPixels, roundedInner, connectDiagonals, fullLCorners, skipCheckerLCorners, connectDiagonalsOrder);
+    } else if (useContour) {
+      barResult = squaresToContourPath(barSq, proxyAllPixels, roundedPixels, roundedInner, connectDiagonals, fullLCorners, skipCheckerLCorners);
+    } else if (roundedPixels > 0 || roundedInner > 0) {
+      barResult = squaresToRoundedPath(barSq, proxyAllPixels, roundedPixels, roundedInner, connectDiagonals, diagOnly, jiggle, fullLCorners, skipCheckerLCorners, connectDiagonalsOrder, tipStyle, tipBase, islandStyle);
+    } else {
+      barResult = { path: squaresToPath(barSq), fillets: "" };
+    }
+    decorationPaths.push(["finder-bar", barResult.path, fgColor, 1]);
+    if (barResult.fillets) allFillets += (allFillets ? " " : "") + barResult.fillets;
   }
 
   return generateSvg(qrPath, decorationPaths, layout, { bgColor, bgShape, fgColor, borderColor, border2Color, border2Width, border2Offset, wobbleFreq, wobbleOctaves, wobbleScale, filletPath: allFillets });
