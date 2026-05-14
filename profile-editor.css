@@ -11,7 +11,7 @@ h1 { font-size: 18px; margin-bottom: 12px; }
 .canvas-wrap svg { background: white; border: 1px solid #ccc; border-radius: 4px; }
 .sliders { min-width: 260px; }
 .slider-row { margin-bottom: 8px; }
-.slider-row label { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 2px; }
+.slider-row label { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 2px; }
 .slider-row .val { font-family: monospace; color: #666; }
 .slider-row input[type=range] { width: 100%; }
 .code-out {
@@ -19,6 +19,8 @@ h1 { font-size: 18px; margin-bottom: 12px; }
   border-radius: 4px; padding: 8px; white-space: pre-wrap; word-break: break-all; min-height: 40px;
 }
 .copied { color: #2a2; font-weight: bold; }
+.sliders fieldset { border: 1px solid #ddd; border-radius: 4px; padding: 4px 8px 6px; margin-bottom: 8px; }
+.sliders fieldset legend { font-size: 16px; font-weight: 600; color: #555; padding: 0 4px; }
 .save-row { display: flex; align-items: center; gap: 16px; }
 .paste-label { cursor: pointer; padding: 4px 8px; width: min-content; }
 .paste-area { position: relative; white-space: nowrap; }

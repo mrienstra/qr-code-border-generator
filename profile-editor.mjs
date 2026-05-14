@@ -151,55 +151,106 @@ export function initProfileEditor({
   }
 
   // --- Sliders ---
+  // Keys matching this pattern belong to a named group (fieldset).
+  // Capture 1 = prefix (e.g. "peak1", "valley2", "center")
+  // Capture 2 = short label (e.g. "X", "Pull", "Open")
+  const GROUP_RE = /^(peak\d*|valley\d*|center)([A-Z]\w*)$/;
+
+  function prefixToLegend(prefix) {
+    if (prefix === "center") return "Center";
+    const m = prefix.match(/^(peak|valley)(\d+)?$/);
+    if (m) {
+      const word = m[1].charAt(0).toUpperCase() + m[1].slice(1);
+      return m[2] ? `${word} ${m[2]}` : word;
+    }
+    return prefix;
+  }
+
+  function makeSliderRow(name, displayLabel, params, defaults) {
+    const val = params[name];
+    const row = document.createElement("div");
+    row.className = "slider-row";
+
+    const label = document.createElement("label");
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = displayLabel;
+    const valSpan = document.createElement("span");
+    valSpan.className = "val";
+    valSpan.textContent = val.toFixed(2);
+    label.appendChild(nameSpan);
+    label.appendChild(valSpan);
+
+    const input = document.createElement("input");
+    input.type = "range";
+    const range = sliderRange(name);
+    input.min = range.min;
+    input.max = range.max;
+    input.step = range.step;
+    input.value = String(val);
+
+    input.addEventListener("input", () => {
+      const v = parseFloat(input.value);
+      params[name] = v;
+      valSpan.textContent = v.toFixed(2);
+      updateShape();
+    });
+
+    if (defaults) {
+      input.addEventListener("dblclick", () => {
+        const v = defaults[name];
+        params[name] = v;
+        input.value = String(v);
+        valSpan.textContent = v.toFixed(2);
+        updateShape();
+      });
+    }
+
+    row.appendChild(label);
+    row.appendChild(input);
+    return row;
+  }
+
   function buildSliders() {
     slidersDiv.innerHTML = "";
     const style = currentStyle();
     const params = currentParams();
     const defaults = DEFAULTS[style];
 
+    const standalone = [];
+    const groupOrder = [];
+    const groups = new Map(); // groupKey → { legend, entries: [{name, label}] }
+
     for (const [name, val] of Object.entries(params)) {
       if (typeof val !== "number") continue;
-
-      const row = document.createElement("div");
-      row.className = "slider-row";
-
-      const label = document.createElement("label");
-      const nameSpan = document.createElement("span");
-      nameSpan.textContent = name;
-      const valSpan = document.createElement("span");
-      valSpan.className = "val";
-      valSpan.textContent = val.toFixed(2);
-      label.appendChild(nameSpan);
-      label.appendChild(valSpan);
-
-      const input = document.createElement("input");
-      input.type = "range";
-      const range = sliderRange(name);
-      input.min = range.min;
-      input.max = range.max;
-      input.step = range.step;
-      input.value = String(val);
-
-      input.addEventListener("input", () => {
-        const v = parseFloat(input.value);
-        params[name] = v;
-        valSpan.textContent = v.toFixed(2);
-        updateShape();
-      });
-
-      if (defaults) {
-        input.addEventListener("dblclick", () => {
-          const v = defaults[name];
-          params[name] = v;
-          input.value = String(v);
-          valSpan.textContent = v.toFixed(2);
-          updateShape();
-        });
+      const m = name.match(GROUP_RE);
+      if (m) {
+        const prefix = m[1];
+        const shortLabel = m[2];
+        const groupKey = prefix === "center" ? "center" : prefix;
+        if (!groups.has(groupKey)) {
+          groups.set(groupKey, { legend: prefixToLegend(prefix), entries: [] });
+          groupOrder.push(groupKey);
+        }
+        groups.get(groupKey).entries.push({ name, label: shortLabel });
+      } else {
+        standalone.push(name);
       }
+    }
 
-      row.appendChild(label);
-      row.appendChild(input);
-      slidersDiv.appendChild(row);
+    for (const name of standalone) {
+      slidersDiv.appendChild(makeSliderRow(name, name, params, defaults));
+    }
+
+    for (const groupKey of groupOrder) {
+      const { legend, entries } = groups.get(groupKey);
+      const fieldset = document.createElement("fieldset");
+      const legendEl = document.createElement("legend");
+      legendEl.textContent = legend;
+      fieldset.appendChild(legendEl);
+      for (const { name, label } of entries) {
+        fieldset.appendChild(makeSliderRow(name, label, params, defaults));
+      }
+      slidersDiv.appendChild(fieldset);
     }
   }
 

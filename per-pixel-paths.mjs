@@ -48,13 +48,13 @@ export const TIP_PROFILES = {
     lobes: 3, base: 0.00, shoulder: 0.40,
     peak1X: 0.84, peak1Y: 0.14, peak1Pull: 0.16, peak1Open: 0, peak1Rotate: 0,
     valley1X: 0.66, valley1Y: 0.36, valley1Pull: 0.00, valley1Open: 0, valley1Rotate: 0,
-    centerY: 0.00, midPull: 0.19, midOpen: 0, midRotate: 0,
+    centerY: 0.00, centerPull: 0.19, centerOpen: 0, centerRotate: 0,
   },
 
   "double-paw": {
     lobes: 2, base: 0, shoulder: 0.5,
     peak1X: 0.74, peak1Y: 0, peak1Pull: 0.25,  peak1Open: 0, peak1Rotate: 0,
-    centerY: 0.4, midPull: 0,  midOpen: 0, midRotate: 0,
+    centerY: 0.4, centerPull: 0,  centerOpen: 0, centerRotate: 0,
   },
 
   "quad-paw": {
@@ -62,7 +62,7 @@ export const TIP_PROFILES = {
     peak1X: 0.86, peak1Y: 0.1, peak1Pull: 0.08, peak1Open: 0, peak1Rotate: 0,
     valley1X: 0.74, valley1Y: 0.34, valley1Pull: 0.01, valley1Open: 0, valley1Rotate: 0,
     peak2X: 0.62, peak2Y: 0, peak2Pull: 0.08,  peak2Open: 0, peak2Rotate: 0,
-    centerY: 0.24, midPull: 0.01, midOpen: 0, midRotate: 0,
+    centerY: 0.24, centerPull: 0.01, centerOpen: 0, centerRotate: 0,
   },
   "penta-paw": {
     lobes: 5, base: 0, shoulder: 0.5,
@@ -70,7 +70,7 @@ export const TIP_PROFILES = {
     valley1X: 0.77, valley1Y: 0.35, valley1Pull: 0.01, valley1Open: 0, valley1Rotate: 0,
     peak2X: 0.68, peak2Y: 0.1, peak2Pull: 0.1, peak2Open: 0, peak2Rotate: 0,
     valley2X: 0.59, valley2Y: 0.25, valley2Pull: 0.01, valley2Open: 0, valley2Rotate: 0,
-    centerY: 0, midPull: 0.1, midOpen: 0, midRotate: 0,
+    centerY: 0, centerPull: 0.1, centerOpen: 0, centerRotate: 0,
   },
   "hex-paw": {
     lobes: 6, base: 0, shoulder: 0.5,
@@ -79,7 +79,7 @@ export const TIP_PROFILES = {
     peak2X: 0.75, peak2Y: 0.1, peak2Pull: 0.08, peak2Open: 0, peak2Rotate: 0,
     valley2X: 0.67, valley2Y: 0.35, valley2Pull: 0.01, peak2Open: 0, peak2Rotate: 0,
     peak3X: 0.58, peak3Y: 0, peak3Pull: 0.08, peak3Open: 0, peak3Rotate: 0,
-    centerY: 0.25, midPull: 0.01, midOpen: 0, midRotate: 0,
+    centerY: 0.25, centerPull: 0.01, centerOpen: 0, centerRotate: 0,
   },
   "seven-paw": {
     lobes: 7, base: 0, shoulder: 0.5,
@@ -89,30 +89,30 @@ export const TIP_PROFILES = {
     valley2X: 0.7, valley2Y: 0.35, valley2Pull: 0.01, valley2Open: 0, valley2Rotate: 0,
     peak3X: 0.65, peak3Y: 0.1, peak3Pull: 0.09, peak3Open: 0, peak3Rotate: 0,
     valley3X: 0.57, valley3Y: 0.25, valley3Pull: 0.01, valley3Open: 0, valley3Rotate: 0,
-    centerY: 0, midPull: 0.1, midOpen: 0, midRotate: 0,
+    centerY: 0, centerPull: 0.1, centerOpen: 0, centerRotate: 0,
   },
   claw: {
     lobes: 3, base: 0, shoulder: 0.5,
     peak1X: 0.8, peak1Y: 0.09, peak1Pull: 0.01, peak1Open: 0, peak1Rotate: 0,
     valley1X: 0.66, valley1Y: 0.31, valley1Pull: 0.01, valley1Open: 0, valley1Rotate: 0,
-    centerY: 0, midPull: 0.01, midOpen: 0, midRotate: 0,
+    centerY: 0, centerPull: 0.01, centerOpen: 0, centerRotate: 0,
   },
 
   "stubby-paw": {
     lobes: 3, base: 0.5, shoulder: 0.31,
     peak1X: 0.80, peak1Y: 0.25, peak1Pull: 0.12, peak1Open: 0, peak1Rotate: 0,
     valley1X: 0.66, valley1Y: 0.54, valley1Pull: 0, valley1Open: 0, valley1Rotate: 0,
-    centerY: 0, midPull: 0.19, midOpen: 0, midRotate: 0,
+    centerY: 0, centerPull: 0.19, centerOpen: 0, centerRotate: 0,
   },
 
   "stubby-claw": {
     lobes: 3, base: 0.5, shoulder: 0.37,
     peak1X: 0.8, peak1Y: 0.18, peak1Pull: 0.01, peak1Open: 0, peak1Rotate: 0,
     valley1X: 0.66, valley1Y: 0.61, valley1Pull: 0.01, valley1Open: 0, valley1Rotate: 0,
-    centerY: 0, midPull: 0.01, midOpen: 0, midRotate: 0,
+    centerY: 0, centerPull: 0.01, centerOpen: 0, centerRotate: 0,
   },
   "weird": {
-    lobes: 3, base: 0, shoulder: 0.4, peak1X: 0.75, peak1Y: 0.15, peak1Pull: 0.49, peak1Open: -0.48, peak1Rotate: -0.18, valley1X: 0.66, valley1Y: 0.7, valley1Pull: 0, valley1Open: 0, valley1Rotate: 0, centerY: 0, midPull: 0.57, midOpen: -0.5, midRotate: 0
+    lobes: 3, base: 0, shoulder: 0.4, peak1X: 0.75, peak1Y: 0.15, peak1Pull: 0.49, peak1Open: -0.48, peak1Rotate: -0.18, valley1X: 0.66, valley1Y: 0.7, valley1Pull: 0, valley1Open: 0, valley1Rotate: 0, centerY: 0, centerPull: 0.57, centerOpen: -0.5, centerRotate: 0
   }
 };
 
@@ -121,9 +121,9 @@ export function buildLobedTipPath(p, ps, profile) {
     lobes,
     shoulder,
     centerY,
-    midPull = 0,
-    midOpen = 0,
-    midRotate = 0,
+    centerPull = 0,
+    centerOpen = 0,
+    centerRotate = 0,
   } = profile;
 
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -208,9 +208,9 @@ export function buildLobedTipPath(p, ps, profile) {
   const centerNode = {
     x: 0.5,
     y: centerY,
-    pull: midPull,
-    open: midOpen,
-    rotate: midRotate,
+    pull: centerPull,
+    open: centerOpen,
+    rotate: centerRotate,
   };
 
   const leftNodes = rightNodes.slice().reverse().map((n) => ({
