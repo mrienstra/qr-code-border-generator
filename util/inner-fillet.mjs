@@ -1,6 +1,6 @@
 /**
  * Inner fillet geometry — quadratic Bézier wedges at concave pixel corners.
- * Shared by per-pixel-paths.mjs (main renderer) and tip-editor.html (preview).
+ * Shared by per-pixel-paths.mjs, pixel-classify.mjs, and contour-paths.mjs.
  */
 import { fmt } from '../pixel-paths.mjs';
 
@@ -29,22 +29,32 @@ export function findArcEdge(line, cx, cy, R, sign, isHoriz) {
 }
 
 /**
+ * Solve for the quadratic Bézier control point given two endpoints with tangents.
+ * @param {{px:number, py:number, tx:number, ty:number}} eA - first endpoint + tangent
+ * @param {{px:number, py:number, tx:number, ty:number}} eB - second endpoint + tangent
+ * @returns {{x: number, y: number}}
+ */
+export function filletControlPoint(eA, eB) {
+  const det = eA.tx * (-eB.ty) - (-eB.tx) * eA.ty;
+  if (Math.abs(det) < 1e-10) {
+    return { x: (eA.px + eB.px) / 2, y: (eA.py + eB.py) / 2 };
+  }
+  const alpha = ((eB.px - eA.px) * (-eB.ty) - (-eB.tx) * (eB.py - eA.py)) / det;
+  return { x: eA.px + alpha * eA.tx, y: eA.py + alpha * eA.ty };
+}
+
+/**
  * Build the SVG path for an inner fillet given two endpoints with tangents.
  * Solves for the quadratic Bézier control point satisfying both tangent
  * constraints, with optional jiggle offset.
  * @returns {string} SVG path fragment (M...Q...L...Z)
  */
 export function buildFilletPath(ax, ay, tax, tay, bx, by, tbx, tby, vx, vy, jcx = 0, jcy = 0) {
-  const det = tax * (-tby) - (-tbx) * tay;
-  let cpx, cpy;
-  if (Math.abs(det) < 1e-10) {
-    cpx = (ax + bx) / 2; cpy = (ay + by) / 2;
-  } else {
-    const alpha = ((bx - ax) * (-tby) - (-tbx) * (by - ay)) / det;
-    cpx = ax + alpha * tax;
-    cpy = ay + alpha * tay;
-  }
-  cpx += jcx; cpy += jcy;
+  const cp = filletControlPoint(
+    { px: ax, py: ay, tx: tax, ty: tay },
+    { px: bx, py: by, tx: tbx, ty: tby },
+  );
+  const cpx = cp.x + jcx, cpy = cp.y + jcy;
   return `M${fmt(ax)},${fmt(ay)}Q${fmt(cpx)},${fmt(cpy)},${fmt(bx)},${fmt(by)}L${fmt(vx)},${fmt(vy)}Z`;
 }
 

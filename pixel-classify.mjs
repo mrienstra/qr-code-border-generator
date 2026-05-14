@@ -11,6 +11,7 @@
  */
 
 import { key, fmt } from './pixel-paths.mjs';
+import { findArcEdge, filletControlPoint } from './util/inner-fillet.mjs';
 
 /**
  * Classify the visual appearance of every filled pixel.
@@ -140,34 +141,8 @@ export function classifyPixels(squares, allPixels, opts) {
   return map;
 }
 
-// Arc-line intersection: find where a unit circle at (cx, cy) intersects
-// a horizontal line (isHoriz=true, y=lineCoord) or vertical line (isHoriz=false, x=lineCoord).
-// sign picks which of the two intersection points to return.
-// Returns { px, py, tx, ty } — position and tangent at intersection.
-function arcLineIntersect(cx, cy, R, lineCoord, isHoriz, sign) {
-  if (isHoriz) {
-    const dy = lineCoord - cy;
-    const dx = sign * Math.sqrt(Math.max(0, R * R - dy * dy));
-    const len = Math.hypot(dx, dy);
-    return { px: cx + dx, py: lineCoord, tx: dy / len, ty: -dx / len };
-  } else {
-    const dx = lineCoord - cx;
-    const dy = sign * Math.sqrt(Math.max(0, R * R - dx * dx));
-    const len = Math.hypot(dx, dy);
-    return { px: lineCoord, py: cy + dy, tx: dy / len, ty: -dx / len };
-  }
-}
-
-// Solve for quadratic Bezier control point given two endpoints with tangents.
-// eA tangent points toward cp; eB tangent points away from cp.
-function filletControlPoint(eA, eB) {
-  const det = eA.tx * (-eB.ty) - (-eB.tx) * eA.ty;
-  if (Math.abs(det) < 1e-10) {
-    return { x: (eA.px + eB.px) / 2, y: (eA.py + eB.py) / 2 };
-  }
-  const alpha = ((eB.px - eA.px) * (-eB.ty) - (-eB.tx) * (eB.py - eA.py)) / det;
-  return { x: eA.px + alpha * eA.tx, y: eA.py + alpha * eA.ty };
-}
+// arcLineIntersect and filletControlPoint are imported from util/inner-fillet.mjs
+// as findArcEdge and filletControlPoint respectively.
 
 /**
  * Compute vertex-level geometry facts for every grid vertex adjacent to
@@ -339,10 +314,10 @@ export function computeVertexMap(pixelMap, allPixels, opts) {
         stdA = { px: vx, py: vy - ri, tx: 0, ty: 1 };
         stdB = { px: vx - ri, py: vy, tx: -1, ty: 0 };
         const eA = Ra > ro
-          ? arcLineIntersect(vx + Ra, vy - 1 + Ra, Ra, vy - ri, true, -1)
+          ? findArcEdge(vy - ri, vx + Ra, vy - 1 + Ra, Ra, -1, true)
           : stdA;
         const eB = Rb > ro
-          ? arcLineIntersect(vx - 1 + Rb, vy + Rb, Rb, vx - ri, false, -1)
+          ? findArcEdge(vx - ri, vx - 1 + Rb, vy + Rb, Rb, -1, false)
           : stdB;
         const cp = filletControlPoint(eA, eB);
         entry.concave = { absent, eA, eB, cp, aOnArc: Ra > ro, bOnArc: Rb > ro };
@@ -354,10 +329,10 @@ export function computeVertexMap(pixelMap, allPixels, opts) {
         stdA = { px: vx, py: vy - ri, tx: 0, ty: 1 };
         stdB = { px: vx + ri, py: vy, tx: -1, ty: 0 };
         const eA = Ra > ro
-          ? arcLineIntersect(vx - Ra, vy - 1 + Ra, Ra, vy - ri, true, +1)
+          ? findArcEdge(vy - ri, vx - Ra, vy - 1 + Ra, Ra, +1, true)
           : stdA;
         const eB = Rb > ro
-          ? arcLineIntersect(vx + 1 - Rb, vy + Rb, Rb, vx + ri, false, -1)
+          ? findArcEdge(vx + ri, vx + 1 - Rb, vy + Rb, Rb, -1, false)
           : stdB;
         const cp = filletControlPoint(eA, eB);
         entry.concave = { absent, eA, eB, cp, aOnArc: Ra > ro, bOnArc: Rb > ro };
@@ -369,10 +344,10 @@ export function computeVertexMap(pixelMap, allPixels, opts) {
         stdA = { px: vx, py: vy + ri, tx: 0, ty: -1 };
         stdB = { px: vx + ri, py: vy, tx: 1, ty: 0 };
         const eA = Ra > ro
-          ? arcLineIntersect(vx - Ra, vy + 1 - Ra, Ra, vy + ri, true, +1)
+          ? findArcEdge(vy + ri, vx - Ra, vy + 1 - Ra, Ra, +1, true)
           : stdA;
         const eB = Rb > ro
-          ? arcLineIntersect(vx + 1 - Rb, vy - Rb, Rb, vx + ri, false, +1)
+          ? findArcEdge(vx + ri, vx + 1 - Rb, vy - Rb, Rb, +1, false)
           : stdB;
         const cp = filletControlPoint(eA, eB);
         entry.concave = { absent, eA, eB, cp, aOnArc: Ra > ro, bOnArc: Rb > ro };
@@ -384,10 +359,10 @@ export function computeVertexMap(pixelMap, allPixels, opts) {
         stdA = { px: vx, py: vy + ri, tx: 0, ty: -1 };
         stdB = { px: vx - ri, py: vy, tx: 1, ty: 0 };
         const eA = Ra > ro
-          ? arcLineIntersect(vx + Ra, vy + 1 - Ra, Ra, vy + ri, true, -1)
+          ? findArcEdge(vy + ri, vx + Ra, vy + 1 - Ra, Ra, -1, true)
           : stdA;
         const eB = Rb > ro
-          ? arcLineIntersect(vx - 1 + Rb, vy - Rb, Rb, vx - ri, false, +1)
+          ? findArcEdge(vx - ri, vx - 1 + Rb, vy - Rb, Rb, +1, false)
           : stdB;
         const cp = filletControlPoint(eA, eB);
         entry.concave = { absent, eA, eB, cp, aOnArc: Ra > ro, bOnArc: Rb > ro };

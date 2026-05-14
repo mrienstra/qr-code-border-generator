@@ -3,6 +3,7 @@
  */
 
 import { key, unkey, snap, fmt } from './pixel-paths.mjs';
+import { findArcEdge, filletControlPoint } from './util/inner-fillet.mjs';
 
 // --- Contour tracing: one closed SVG path per connected component ---
 
@@ -333,35 +334,8 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
   }
 
   // --- Step 4d: Geometry helpers for tangent-continuous fillets ---
-
-  // Find where an axis-aligned line intersects a unit circle centered at (cx, cy).
-  // isVerticalLine=true: line is x=lineCoord; false: line is y=lineCoord.
-  // sign picks which of the two intersection points to return.
-  // Returns { px, py, tx, ty } — point and tangent direction on the arc.
-  function arcLineIntersect(cx, cy, isVerticalLine, lineCoord, sign) {
-    if (isVerticalLine) {
-      const dx = lineCoord - cx;
-      const dy = sign * Math.sqrt(Math.max(0, 1 - dx * dx));
-      const len = Math.hypot(dx, dy);
-      return { px: lineCoord, py: cy + dy, tx: dy / len, ty: -dx / len };
-    } else {
-      const dy = lineCoord - cy;
-      const dx = sign * Math.sqrt(Math.max(0, 1 - dy * dy));
-      const len = Math.hypot(dx, dy);
-      return { px: cx + dx, py: lineCoord, tx: dy / len, ty: -dx / len };
-    }
-  }
-
-  // Compute the Q bezier control point from two tangent endpoints (eA, eB).
-  // Each has { px, py, tx, ty }. Returns { cpx, cpy }.
-  function filletControlPoint(eA, eB) {
-    const det = eA.tx * (-eB.ty) - (-eB.tx) * eA.ty;
-    if (Math.abs(det) < 1e-10) {
-      return { cpx: (eA.px + eB.px) / 2, cpy: (eA.py + eB.py) / 2 };
-    }
-    const alpha = ((eB.px - eA.px) * (-eB.ty) - (-eB.tx) * (eB.py - eA.py)) / det;
-    return { cpx: eA.px + alpha * eA.tx, cpy: eA.py + alpha * eA.ty };
-  }
+  // arcLineIntersect and filletControlPoint are imported from util/inner-fillet.mjs
+  // as findArcEdge and filletControlPoint respectively.
 
   // Compute where a fillet line from a concave vertex meets an L-corner's r=1 arc.
   // lcVertex: the L-corner vertex; vx,vy: concave vertex position;
@@ -373,7 +347,7 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
     const edgeVertical = edgeDy !== 0;
     const lineCoord = edgeVertical ? (vy - edgeDy * ri) : (vx - edgeDx * ri);
     const sign = edgeVertical ? Math.sign(vx - arcCx) : Math.sign(vy - arcCy);
-    return arcLineIntersect(arcCx, arcCy, !edgeVertical, lineCoord, sign);
+    return findArcEdge(lineCoord, arcCx, arcCy, 1, sign, edgeVertical);
   }
 
   // --- Step 4e: Serialize SVG path from pre-annotated vertices + resolved plans ---
@@ -429,7 +403,7 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
             const edgeH = prevDx !== 0;
             const line = edgeH ? (pv.x + prevDx * ri) : (pv.y + prevDy * ri);
             const sign = edgeH ? Math.sign(pv.y - arcCy) : Math.sign(pv.x - arcCx);
-            const pt = arcLineIntersect(arcCx, arcCy, edgeH, line, sign);
+            const pt = findArcEdge(line, arcCx, arcCy, 1, sign, !edgeH);
             startX = pt.px; startY = pt.py;
           }
 
@@ -440,7 +414,7 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
             const edgeV = ody !== 0;
             const line = edgeV ? (nv.y - ody * ri) : (nv.x - odx * ri);
             const sign = edgeV ? Math.sign(nv.x - arcCx) : Math.sign(nv.y - arcCy);
-            const pt = arcLineIntersect(arcCx, arcCy, !edgeV, line, sign);
+            const pt = findArcEdge(line, arcCx, arcCy, 1, sign, edgeV);
             tgtX = pt.px; tgtY = pt.py;
           } else {
             tgtX = vertices[i].x + lodx * r;
@@ -466,21 +440,21 @@ export function squaresToContourPath(squares, allPixels, rOuter, rInner, connect
           const vx = vertices[i].x, vy = vertices[i].y;
           const eA = lcArcFilletPoint(vertices[prevI], vx, vy, prevDx, prevDy, ri);
           const eB = lcArcFilletPoint(vertices[nextI], vx, vy, -odx, -ody, ri);
-          const { cpx, cpy } = filletControlPoint(eA, eB);
+          const { x: cpx, y: cpy } = filletControlPoint(eA, eB);
           p.push(`Q${fmt(cpx)},${fmt(cpy)},${fmt(eB.px)},${fmt(eB.py)}`);
         } else if (prevFR && ri > 0) {
           // Previous vertex has L-corner: fillet starts on the r=1 arc
           const vx = vertices[i].x, vy = vertices[i].y;
           const eA = lcArcFilletPoint(vertices[prevI], vx, vy, prevDx, prevDy, ri);
           const eB = { px: vx + odx * ri, py: vy + ody * ri, tx: -odx, ty: -ody };
-          const { cpx, cpy } = filletControlPoint(eA, eB);
+          const { x: cpx, y: cpy } = filletControlPoint(eA, eB);
           p.push(`Q${fmt(cpx)},${fmt(cpy)},${fmt(eB.px)},${fmt(eB.py)}`);
         } else if (nextFR && ri > 0) {
           // Next vertex has L-corner: fillet ends on the r=1 arc
           const vx = vertices[i].x, vy = vertices[i].y;
           const eA = { px: vx - prevDx * ri, py: vy - prevDy * ri, tx: prevDx, ty: prevDy };
           const eB = lcArcFilletPoint(vertices[nextI], vx, vy, -odx, -ody, ri);
-          const { cpx, cpy } = filletControlPoint(eA, eB);
+          const { x: cpx, y: cpy } = filletControlPoint(eA, eB);
           p.push(`Q${fmt(cpx)},${fmt(cpy)},${fmt(eB.px)},${fmt(eB.py)}`);
         } else {
           // Standard fillet
