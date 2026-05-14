@@ -97,8 +97,7 @@ const roundedInnerValue = document.getElementById("rounded-inner-value");
 const fullLCornersCheckbox = document.getElementById("full-l-corners");
 const skipCheckerLCornersCheckbox = document.getElementById("skip-checker-l-corners");
 const skipCheckerLCornersRow = document.getElementById("skip-checker-l-corners-row");
-const contourModeCheckbox = document.getElementById("contour-mode");
-const cleanPathModeCheckbox = document.getElementById("clean-path-mode");
+const getRenderer = () => document.querySelector('input[name="renderer"]:checked')?.value ?? "per-pixel";
 const connectDiagonalsSlider = document.getElementById("connect-diagonals");
 const connectDiagonalsValue = document.getElementById("connect-diagonals-value");
 const cdOrderSelect = document.getElementById("cd-order");
@@ -275,8 +274,7 @@ function saveToUrl() {
     rpri: roundedInner.value,
     flc: fullLCornersCheckbox.checked ? "1" : "0",
     scl: skipCheckerLCornersCheckbox.checked ? "1" : "0",
-    ct: contourModeCheckbox.checked ? "1" : "0",
-    cp: cleanPathModeCheckbox.checked ? "1" : "0",
+    rm: getRenderer(),
     cd: connectDiagonalsSlider.value,
     cdo: cdOrderSelect.value,
     dgo: diagOnlyCheckbox.checked ? "1" : "0",
@@ -364,8 +362,7 @@ function loadFromUrl() {
   if (get("rpri") != null) { roundedInner.value = get("rpri"); roundedInnerValue.textContent = parseFloat(get("rpri")).toFixed(2); }
   if (get("flc") != null) fullLCornersCheckbox.checked = get("flc") === "1";
   if (get("scl") != null) skipCheckerLCornersCheckbox.checked = get("scl") === "1";
-  if (get("ct") != null) contourModeCheckbox.checked = get("ct") === "1";
-  if (get("cp") != null) cleanPathModeCheckbox.checked = get("cp") === "1";
+  if (get("rm") != null) { const el = document.querySelector(`input[name="renderer"][value="${get("rm")}"]`); if (el) el.checked = true; }
   if (get("cd") != null) { connectDiagonalsSlider.value = get("cd"); connectDiagonalsValue.textContent = cdLabel(get("cd")); }
   if (get("cdo") != null) cdOrderSelect.value = get("cdo");
   if (get("dgo") != null) diagOnlyCheckbox.checked = get("dgo") === "1";
@@ -464,8 +461,8 @@ function redraw() {
     jiggle: parseFloat(jiggleSlider.value),
     fullLCorners: fullLCornersCheckbox.checked,
     skipCheckerLCorners: skipCheckerLCornersCheckbox.checked,
-    contourMode: contourModeCheckbox.checked,
-    cleanPathMode: cleanPathModeCheckbox.checked,
+    contourMode: getRenderer() === "contour",
+    cleanPathMode: getRenderer() === "clean-path",
     wobbleFreq: parseFloat(wobbleFreqSlider.value),
     wobbleOctaves: parseInt(wobbleOctavesSlider.value),
     wobbleScale: parseFloat(wobbleScaleSlider.value),
@@ -772,8 +769,7 @@ fullLCornersCheckbox.addEventListener("change", () => {
   redraw();
 });
 skipCheckerLCornersCheckbox.addEventListener("change", () => redraw());
-contourModeCheckbox.addEventListener("change", () => redraw());
-cleanPathModeCheckbox.addEventListener("change", () => redraw());
+document.querySelectorAll('input[name="renderer"]').forEach(r => r.addEventListener("change", () => redraw()));
 jiggleSlider.addEventListener("input", () => {
   jiggleValue.textContent = jiggleSlider.value;
   redraw();

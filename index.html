@@ -85,13 +85,13 @@
               <input type="checkbox" id="skip-checker-l-corners">
               <label for="skip-checker-l-corners">Skip at diagonal neighbors</label>
             </div>
-            <div class="checkbox-row">
-              <input type="checkbox" id="contour-mode">
-              <label for="contour-mode">Contour tracing</label>
-            </div>
-            <div class="checkbox-row">
-              <input type="checkbox" id="clean-path-mode">
-              <label for="clean-path-mode">Clean path</label>
+            <div class="field">
+              <label>Renderer</label>
+              <div class="radio-group">
+                <label><input type="radio" name="renderer" value="per-pixel" checked>Per pixel</label>
+                <label><input type="radio" name="renderer" value="clean-path">Clean path</label>
+                <label><input type="radio" name="renderer" value="contour">Contour</label>
+              </div>
             </div>
             <div class="field">
               <label>Connect diagonals</label>
