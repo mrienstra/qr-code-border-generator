@@ -71,23 +71,25 @@ export function buildFilletPath(ax, ay, tax, tay, bx, by, tbx, tby, vx, vy, jcx 
  * @param {number} [opts.ro=0]  - threshold; Ra/Rb > ro triggers arc intersection
  * @param {number} [opts.jcx=0] - jiggle x offset for control point
  * @param {number} [opts.jcy=0] - jiggle y offset for control point
+ * @param {object} [opts.eAOverride] - override eA endpoint+tangent {px,py,tx,ty} (e.g. tip curve)
+ * @param {object} [opts.eBOverride] - override eB endpoint+tangent {px,py,tx,ty} (e.g. tip curve)
  * @returns {string} SVG path fragment
  */
-export function innerFilletAt(vx, vy, corner, ri, { Ra = 0, Rb = 0, ro = 0, jcx = 0, jcy = 0 } = {}) {
+export function innerFilletAt(vx, vy, corner, ri, { Ra = 0, Rb = 0, ro = 0, jcx = 0, jcy = 0, eAOverride, eBOverride } = {}) {
   // sx: -1 for left corners (TL, BL), +1 for right (TR, BR)
   // sy: -1 for top corners (TL, TR), +1 for bottom (BL, BR)
   const sx = (corner === "tl" || corner === "bl") ? -1 : 1;
   const sy = (corner === "tl" || corner === "tr") ? -1 : 1;
 
   // Edge A: on the horizontal grid line at vy ± ri
-  const eA = Ra > ro
+  const eA = eAOverride ?? (Ra > ro
     ? findArcEdge(vy + sy * ri, vx - sx * Ra, vy + sy * (1 - Ra), Ra, sx, true)
-    : { px: vx, py: vy + sy * ri, tx: 0, ty: -sy };
+    : { px: vx, py: vy + sy * ri, tx: 0, ty: -sy });
 
   // Edge B: on the vertical grid line at vx ± ri
-  const eB = Rb > ro
+  const eB = eBOverride ?? (Rb > ro
     ? findArcEdge(vx + sx * ri, vx + sx * (1 - Rb), vy - sy * Rb, Rb, sy, false)
-    : { px: vx + sx * ri, py: vy, tx: sy, ty: 0 };
+    : { px: vx + sx * ri, py: vy, tx: sy, ty: 0 });
 
   return buildFilletPath(eA.px, eA.py, eA.tx, eA.ty, eB.px, eB.py, eB.tx, eB.ty, vx, vy, jcx, jcy);
 }

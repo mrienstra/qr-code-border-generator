@@ -4,7 +4,7 @@
 
 import { key, unkey, fmt } from './pixel-paths.mjs';
 import { mulberry32 } from './util/prng.mjs';
-import { innerFilletAt, buildFilletPath } from './util/inner-fillet.mjs';
+import { innerFilletAt } from './util/inner-fillet.mjs';
 import { ISLAND_PROFILES, buildRadialIslandPath } from './island-profiles.mjs';
 
 // Map a normalized (u,v) point in "tip-up" space to actual pixel coords
@@ -389,7 +389,9 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
   const needsTwoPass = (fullLCorners || tipStyle !== "none") && ri > 0;
   const cornerInfoMap = needsTwoPass ? new Map() : null;
 
-  // Pre-compute tip edge data for inner fillets (once per profile, not per instance)
+  // Pre-compute tip edge data for inner fillets (once per profile, not per instance).
+  // findTipEdge returns {px, py, tx, ty} in normalized up-tip space [0,1]².
+  // We store these and transform to grid coords at use time via mapTipPt's Jacobian.
   const tipEdgeCache = new Map();
   if (ri > 0 && tipStyle !== "none") {
     for (const [name, profile] of Object.entries(TIP_PROFILES)) {
@@ -400,6 +402,51 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
     }
   }
   const tipDirMap = new Map();
+
+  // Transform a pre-computed tip edge from normalized up-tip space to grid coords.
+  // dir: tip orientation, tx/ty: tip pixel coords, e: normalized edge {px,py,tx,ty}
+  function transformTipEdge(dir, tx, ty, e) {
+    const [gx, gy] = mapTipPt(tx, ty, dir, e.px, e.py);
+    // Tangent transform via mapTipPt's Jacobian (partial derivatives of [u,v]→[gx,gy])
+    let gtx, gty;
+    switch (dir) {
+      case "up":    gtx = e.tx;  gty = e.ty;  break;
+      case "down":  gtx = -e.tx; gty = -e.ty; break;
+      case "left":  gtx = e.ty;  gty = -e.tx; break;
+      default:      gtx = -e.ty; gty = e.tx;  break; // right
+    }
+    return { px: gx, py: gy, tx: gtx, ty: gty };
+  }
+
+  // Look up tip edge override for a fillet corner. Returns { eAOverride } or
+  // { eBOverride } or {} depending on whether an adjacent tip affects this corner.
+  // Each corner can be affected by up to 2 tip orientations:
+  //   tl: "up" tip above (eA) or "left" tip to left (eB)
+  //   tr: "up" tip above (eA) or "right" tip to right (eB)
+  //   br: "down" tip below (eA) or "right" tip to right (eB)
+  //   bl: "down" tip below (eA) or "left" tip to left (eB)
+  const TIP_CORNER_CHECKS = {
+    tl: [{ dk: [0, -1], dir: "up",    side: "left",  arm: "eAOverride" },
+         { dk: [-1, 0], dir: "left",  side: "right", arm: "eBOverride" }],
+    tr: [{ dk: [0, -1], dir: "up",    side: "right", arm: "eAOverride" },
+         { dk: [1,  0], dir: "right", side: "left",  arm: "eBOverride" }],
+    br: [{ dk: [0,  1], dir: "down",  side: "left",  arm: "eAOverride" },
+         { dk: [1,  0], dir: "right", side: "right", arm: "eBOverride" }],
+    bl: [{ dk: [0,  1], dir: "down",  side: "right", arm: "eAOverride" },
+         { dk: [-1, 0], dir: "left",  side: "left",  arm: "eBOverride" }],
+  };
+  function tipOverride(corner, x, y) {
+    const overrides = {};
+    for (const { dk, dir, side, arm } of TIP_CORNER_CHECKS[corner]) {
+      const tk = key(x + dk[0], y + dk[1]);
+      const info = tipDirMap.get(tk);
+      if (info?.dir !== dir) continue;
+      const edge = tipEdgeCache.get(info.tip)?.[side];
+      if (!edge) continue;
+      overrides[arm] = transformTipEdge(dir, x + dk[0], y + dk[1], edge);
+    }
+    return overrides;
+  }
 
   const paths = sorted.map(([x, y]) => {
     const hasL = allPixels.has(key(x - 1, y));
@@ -596,38 +643,22 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
       if (hasL && hasU && !allPixels.has(key(x - 1, y - 1))) {
         const jcx = jiggle > 0 ? (vtxHash(x, y, 1) - 0.5) * jiggle * ri : 0;
         const jcy = jiggle > 0 ? (vtxHash(x, y, 2) - 0.5) * jiggle * ri : 0;
-        const upTip = tipDirMap.get(key(x, y - 1));
-        const tipEdge = upTip?.dir === "up" && tipEdgeCache.get(upTip.tip)?.left;
-        if (tipEdge) {
-          path += " " + buildFilletPath(
-            tipEdge.px + x, tipEdge.py + (y - 1), tipEdge.tx, tipEdge.ty,
-            x - ri, y, -1, 0, x, y, jcx, jcy);
-        } else {
-          path += " " + innerFilletAt(x, y, "tl", ri, { jcx, jcy });
-        }
+        path += " " + innerFilletAt(x, y, "tl", ri, { jcx, jcy, ...tipOverride("tl", x, y) });
       }
       if (hasR && hasU && !allPixels.has(key(x + 1, y - 1))) {
         const jcx = jiggle > 0 ? (vtxHash(x + 1, y, 1) - 0.5) * jiggle * ri : 0;
         const jcy = jiggle > 0 ? (vtxHash(x + 1, y, 2) - 0.5) * jiggle * ri : 0;
-        const upTip = tipDirMap.get(key(x, y - 1));
-        const tipEdge = upTip?.dir === "up" && tipEdgeCache.get(upTip.tip)?.right;
-        if (tipEdge) {
-          path += " " + buildFilletPath(
-            tipEdge.px + x, tipEdge.py + (y - 1), tipEdge.tx, tipEdge.ty,
-            x + 1 + ri, y, -1, 0, x + 1, y, jcx, jcy);
-        } else {
-          path += " " + innerFilletAt(x + 1, y, "tr", ri, { jcx, jcy });
-        }
+        path += " " + innerFilletAt(x + 1, y, "tr", ri, { jcx, jcy, ...tipOverride("tr", x, y) });
       }
       if (hasR && hasD && !allPixels.has(key(x + 1, y + 1))) {
         const jcx = jiggle > 0 ? (vtxHash(x + 1, y + 1, 1) - 0.5) * jiggle * ri : 0;
         const jcy = jiggle > 0 ? (vtxHash(x + 1, y + 1, 2) - 0.5) * jiggle * ri : 0;
-        path += " " + innerFilletAt(x + 1, y + 1, "br", ri, { jcx, jcy });
+        path += " " + innerFilletAt(x + 1, y + 1, "br", ri, { jcx, jcy, ...tipOverride("br", x, y) });
       }
       if (hasL && hasD && !allPixels.has(key(x - 1, y + 1))) {
         const jcx = jiggle > 0 ? (vtxHash(x, y + 1, 1) - 0.5) * jiggle * ri : 0;
         const jcy = jiggle > 0 ? (vtxHash(x, y + 1, 2) - 0.5) * jiggle * ri : 0;
-        path += " " + innerFilletAt(x, y + 1, "bl", ri, { jcx, jcy });
+        path += " " + innerFilletAt(x, y + 1, "bl", ri, { jcx, jcy, ...tipOverride("bl", x, y) });
       }
     }
     // Diagonal connections: bridge two diagonally adjacent pixels with two
@@ -665,39 +696,19 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
 
       // Inner TL at vertex (x, y)
       if (hasL && hasU && !allPixels.has(key(x - 1, y - 1))) {
-        const jcx = jiggle > 0 ? (vtxHash(x, y, 1) - 0.5) * jiggle * ri : 0;
-        const jcy = jiggle > 0 ? (vtxHash(x, y, 2) - 0.5) * jiggle * ri : 0;
-        const upTip = tipDirMap.get(key(x, y - 1));
-        const tipEdge = upTip?.dir === "up" && tipEdgeCache.get(upTip.tip)?.left;
-        if (tipEdge) {
-          fillets.push(buildFilletPath(
-            tipEdge.px + x, tipEdge.py + (y - 1), tipEdge.tx, tipEdge.ty,
-            x - ri, y, -1, 0, x, y, jcx, jcy));
-        } else {
-          const Ra = cornerInfoMap.get(key(x, y - 1))?.tl ?? ro;
-          const Rb = cornerInfoMap.get(key(x - 1, y))?.tl ?? ro;
-          const jcx2 = Ra <= ro && Rb <= ro ? jcx : 0;
-          const jcy2 = Ra <= ro && Rb <= ro ? jcy : 0;
-          fillets.push(innerFilletAt(x, y, "tl", ri, { Ra, Rb, ro, jcx: jcx2, jcy: jcy2 }));
-        }
+        const Ra = cornerInfoMap.get(key(x, y - 1))?.tl ?? ro;
+        const Rb = cornerInfoMap.get(key(x - 1, y))?.tl ?? ro;
+        const jcx = Ra <= ro && Rb <= ro && jiggle > 0 ? (vtxHash(x, y, 1) - 0.5) * jiggle * ri : 0;
+        const jcy = Ra <= ro && Rb <= ro && jiggle > 0 ? (vtxHash(x, y, 2) - 0.5) * jiggle * ri : 0;
+        fillets.push(innerFilletAt(x, y, "tl", ri, { Ra, Rb, ro, jcx, jcy, ...tipOverride("tl", x, y) }));
       }
       // Inner TR at vertex (x+1, y)
       if (hasR && hasU && !allPixels.has(key(x + 1, y - 1))) {
-        const jcx = jiggle > 0 ? (vtxHash(x + 1, y, 1) - 0.5) * jiggle * ri : 0;
-        const jcy = jiggle > 0 ? (vtxHash(x + 1, y, 2) - 0.5) * jiggle * ri : 0;
-        const upTip = tipDirMap.get(key(x, y - 1));
-        const tipEdge = upTip?.dir === "up" && tipEdgeCache.get(upTip.tip)?.right;
-        if (tipEdge) {
-          fillets.push(buildFilletPath(
-            tipEdge.px + x, tipEdge.py + (y - 1), tipEdge.tx, tipEdge.ty,
-            x + 1 + ri, y, -1, 0, x + 1, y, jcx, jcy));
-        } else {
-          const Ra = cornerInfoMap.get(key(x, y - 1))?.tr ?? ro;
-          const Rb = cornerInfoMap.get(key(x + 1, y))?.tr ?? ro;
-          const jcx2 = Ra <= ro && Rb <= ro ? jcx : 0;
-          const jcy2 = Ra <= ro && Rb <= ro ? jcy : 0;
-          fillets.push(innerFilletAt(x + 1, y, "tr", ri, { Ra, Rb, ro, jcx: jcx2, jcy: jcy2 }));
-        }
+        const Ra = cornerInfoMap.get(key(x, y - 1))?.tr ?? ro;
+        const Rb = cornerInfoMap.get(key(x + 1, y))?.tr ?? ro;
+        const jcx = Ra <= ro && Rb <= ro && jiggle > 0 ? (vtxHash(x + 1, y, 1) - 0.5) * jiggle * ri : 0;
+        const jcy = Ra <= ro && Rb <= ro && jiggle > 0 ? (vtxHash(x + 1, y, 2) - 0.5) * jiggle * ri : 0;
+        fillets.push(innerFilletAt(x + 1, y, "tr", ri, { Ra, Rb, ro, jcx, jcy, ...tipOverride("tr", x, y) }));
       }
       // Inner BR at vertex (x+1, y+1)
       if (hasR && hasD && !allPixels.has(key(x + 1, y + 1))) {
@@ -705,7 +716,7 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
         const Rb = cornerInfoMap.get(key(x + 1, y))?.br ?? ro;
         const jcx = Ra <= ro && Rb <= ro && jiggle > 0 ? (vtxHash(x + 1, y + 1, 1) - 0.5) * jiggle * ri : 0;
         const jcy = Ra <= ro && Rb <= ro && jiggle > 0 ? (vtxHash(x + 1, y + 1, 2) - 0.5) * jiggle * ri : 0;
-        fillets.push(innerFilletAt(x + 1, y + 1, "br", ri, { Ra, Rb, ro, jcx, jcy }));
+        fillets.push(innerFilletAt(x + 1, y + 1, "br", ri, { Ra, Rb, ro, jcx, jcy, ...tipOverride("br", x, y) }));
       }
       // Inner BL at vertex (x, y+1)
       if (hasL && hasD && !allPixels.has(key(x - 1, y + 1))) {
@@ -713,7 +724,7 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
         const Rb = cornerInfoMap.get(key(x - 1, y))?.bl ?? ro;
         const jcx = Ra <= ro && Rb <= ro && jiggle > 0 ? (vtxHash(x, y + 1, 1) - 0.5) * jiggle * ri : 0;
         const jcy = Ra <= ro && Rb <= ro && jiggle > 0 ? (vtxHash(x, y + 1, 2) - 0.5) * jiggle * ri : 0;
-        fillets.push(innerFilletAt(x, y + 1, "bl", ri, { Ra, Rb, ro, jcx, jcy }));
+        fillets.push(innerFilletAt(x, y + 1, "bl", ri, { Ra, Rb, ro, jcx, jcy, ...tipOverride("bl", x, y) }));
       }
     }
     return { path: paths.join(" "), fillets: fillets.join(" ") };
