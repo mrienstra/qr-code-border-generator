@@ -78,47 +78,84 @@ function buildPath(_style, params) {
 }
 
 /**
- * Find where horizontal line y=Y intersects the tip's cubic Bézier edge.
- * Left edge: P0=(0.5,0), P1=(1-b,0), P2=(0,a·s), P3=(0,s) where s=1-base.
- * Returns {px, py, tx, ty} compatible with buildFilletPath, or null if Y is
- * in the straight stem region or the tip is lobed.
+ * Compute Bézier control-point handle pair for a lobed-tip node.
+ * Replicates handlePair from buildLobedTipPath.
+ */
+function tipHandle(node) {
+  const pull = node.pull ?? 0;
+  if (!pull) return { in: [node.x, node.y], out: [node.x, node.y] };
+  const open = Math.max(-1, Math.min(1, node.open ?? 0));
+  const rotate = Math.max(-1, Math.min(1, node.rotate ?? 0));
+  const t = Math.abs(open), axS = open < 0 ? -1 : 1;
+  const ang = -Math.PI / 2 + rotate * (Math.PI / 2);
+  const ax = Math.cos(ang), ay = Math.sin(ang), lx = -ay, ly = ax;
+  const norm = (x, y) => { const m = Math.hypot(x, y) || 1; return [x / m, y / m]; };
+  const [ix, iy] = norm(lx * (1 - t) + ax * axS * t, ly * (1 - t) + ay * axS * t);
+  const [ox, oy] = norm(-lx * (1 - t) + ax * axS * t, -ly * (1 - t) + ay * axS * t);
+  return {
+    in:  [node.x + ix * pull, node.y + iy * pull],
+    out: [node.x + ox * pull, node.y + oy * pull],
+  };
+}
+
+/**
+ * Find where horizontal line y=Y intersects the tip's edge cubic Bézier.
+ * Works for both simple (a/b) and lobed tips.
+ * Returns {px, py, tx, ty} compatible with buildFilletPath,
+ * or null if Y is in the straight stem region.
  */
 function findTipEdge(Y, params, side) {
   const base = params.base || 0;
   const s = 1 - base;
-  if (Y >= s || params.lobes) return null;
+  if (Y >= s) return null; // stem region
 
-  const a = params.a, bp = params.b;
+  // Build the edge segment [P0..P3], oriented tip-to-base (t: 0→1 = top→bottom)
+  let seg;
+  if (params.lobes) {
+    const { shoulder, peak1X, peak1Y } = params;
+    const pull = params.peak1Pull ?? 0, open = params.peak1Open ?? 0, rot = params.peak1Rotate ?? 0;
+    if (side === "left") {
+      const n = { x: 1 - peak1X, y: peak1Y, pull, open, rotate: -rot };
+      const h = tipHandle(n);
+      seg = [[n.x, n.y * s], [h.out[0], h.out[1] * s], [0, (1 - shoulder) * s], [0, s]];
+    } else {
+      const n = { x: peak1X, y: peak1Y, pull, open, rotate: rot };
+      const h = tipHandle(n);
+      // Reverse the right shoulder segment so t goes tip→base
+      seg = [[n.x, n.y * s], [h.in[0], h.in[1] * s], [1, (1 - shoulder) * s], [1, s]];
+    }
+  } else {
+    const { a, b } = params;
+    seg = side === "left"
+      ? [[0.5, 0], [1 - b, 0], [0, a * s], [0, s]]
+      : [[0.5, 0], [b, 0], [1, a * s], [1, s]];
+  }
 
-  // B_y(t) = s · t² · [3a(1-t) + t]
-  // Solve B_y(t) = Y via Newton's method (monotonic, converges fast)
-  let t = 0.8;
+  // Scan line above the segment start → outside shoulder region
+  if (Y < seg[0][1]) return null;
+
+  // General cubic Bézier Newton solver: B_y(t) = Y
+  const y0 = seg[0][1], y1 = seg[1][1], y2 = seg[2][1], y3 = seg[3][1];
+  let t = 0.5;
   for (let i = 0; i < 20; i++) {
-    const omt = 1 - t;
-    const By = s * t * t * (3 * a * omt + t);
+    const u = 1 - t;
+    const By = u * u * u * y0 + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t * y3;
     const f = By - Y;
     if (Math.abs(f) < 1e-10) break;
-    const dBy = 3 * s * t * (2 * a + (1 - 3 * a) * t);
+    const dBy = 3 * u * u * (y1 - y0) + 6 * u * t * (y2 - y1) + 3 * t * t * (y3 - y2);
     if (Math.abs(dBy) < 1e-12) break;
     t -= f / dBy;
     t = Math.max(0.001, Math.min(0.999, t));
   }
 
-  const omt = 1 - t;
-  // B_x left = (1-t)² · [0.5(1-t) + 3t(1-b)]
-  const pxL = omt * omt * (0.5 * omt + 3 * t * (1 - bp));
-  // B'_x left = 3(1-t) · [(1-t)(0.5-b) - 2t(1-b)]
-  const dxL = 3 * omt * (omt * (0.5 - bp) - 2 * t * (1 - bp));
-  // B'_y = 3s · t · [2a(1-t) + t(1-a)]
-  const dy = 3 * s * t * (2 * a * omt + t * (1 - a));
-  const len = Math.hypot(dxL, dy);
+  const u = 1 - t;
+  const x0 = seg[0][0], x1 = seg[1][0], x2 = seg[2][0], x3 = seg[3][0];
+  const px = u * u * u * x0 + 3 * u * u * t * x1 + 3 * u * t * t * x2 + t * t * t * x3;
+  const dx = 3 * u * u * (x1 - x0) + 6 * u * t * (x2 - x1) + 3 * t * t * (x3 - x2);
+  const dy = 3 * u * u * (y1 - y0) + 6 * u * t * (y2 - y1) + 3 * t * t * (y3 - y2);
+  const len = Math.hypot(dx, dy);
 
-  if (side === "left") {
-    return { px: pxL, py: Y, tx: dxL / len, ty: dy / len };
-  } else {
-    // Mirror about x = 0.5
-    return { px: 1 - pxL, py: Y, tx: -dxL / len, ty: dy / len };
-  }
+  return { px, py: Y, tx: dx / len, ty: dy / len };
 }
 
 // --- Context pixels & inner fillets ---
@@ -164,13 +201,11 @@ function updateContext() {
   if (ri > 0) {
     const style = document.getElementById("style-select").value;
     const params = TIP_PROFILES[style];
-    const base = params.base || 0;
-    const useTipEdge = ri > base && !params.lobes;
 
     // Vertex (0,1): concave "tl" when tip + B + BL on
     if (b && bl) {
-      if (useTipEdge) {
-        const eA = findTipEdge(1 - ri, params, "left");
+      const eA = findTipEdge(1 - ri, params, "left");
+      if (eA) {
         const eB = { px: -ri, py: 1, tx: -1, ty: 0 };
         filletParts.push(buildFilletPath(eA.px, eA.py, eA.tx, eA.ty, eB.px, eB.py, eB.tx, eB.ty, 0, 1));
       } else {
@@ -179,8 +214,8 @@ function updateContext() {
     }
     // Vertex (1,1): concave "tr" when tip + B + BR on
     if (b && br) {
-      if (useTipEdge) {
-        const eA = findTipEdge(1 - ri, params, "right");
+      const eA = findTipEdge(1 - ri, params, "right");
+      if (eA) {
         const eB = { px: 1 + ri, py: 1, tx: -1, ty: 0 };
         filletParts.push(buildFilletPath(eA.px, eA.py, eA.tx, eA.ty, eB.px, eB.py, eB.tx, eB.ty, 1, 1));
       } else {
