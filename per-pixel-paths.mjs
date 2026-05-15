@@ -386,7 +386,7 @@ export function squaresToRoundedPath(squares, allPixels, rOuter, rInner, connect
   // vtxHash / resolveStyle are defined above squaresToRoundedPath
   // Two-pass mode: when fullLCorners is active with inner radius, inner fillets
   // need neighbor corner info that isn't available until all outlines are built.
-  const needsTwoPass = fullLCorners && ri > 0;
+  const needsTwoPass = (fullLCorners || tipStyle !== "none") && ri > 0;
   const cornerInfoMap = needsTwoPass ? new Map() : null;
 
   // Pre-compute tip edge data for inner fillets (once per profile, not per instance)
