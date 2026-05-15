@@ -11,6 +11,43 @@ import { key, unkey, snap, fmt } from './pixel-paths.mjs';
 import { classifyPixels, computeVertexMap } from './pixel-classify.mjs';
 import { TIP_PROFILES, resolveStyle } from './per-pixel-paths.mjs';
 
+// For each tip direction, which corner of the owner pixel is the tipCurve start
+// (first vertex encountered in CW traversal) and which is the tipCurveEnd.
+const TIP_CURVE_ROLES = {
+  up:    { tipCurve: "tl", tipCurveEnd: "tr" },
+  down:  { tipCurve: "br", tipCurveEnd: "bl" },
+  left:  { tipCurve: "bl", tipCurveEnd: "tl" },
+  right: { tipCurve: "tr", tipCurveEnd: "br" },
+};
+
+// Compute the 6 control/endpoint values for the two tip cubics in grid space.
+// Uses the per-pixel mapTipPt transformation applied to normalized tip-up coords.
+function tipCurveControlPoints(px, py, dir, s, a, b) {
+  const as = a * s;
+  switch (dir) {
+    case "up": return {
+      tipC1: { x: px, y: py + as }, tipC2: { x: px + 1 - b, y: py },
+      tipApex: { x: px + 0.5, y: py }, tipC3: { x: px + b, y: py },
+      tipC4: { x: px + 1, y: py + as }, tipEndPt: { x: px + 1, y: py + s },
+    };
+    case "down": return {
+      tipC1: { x: px + 1, y: py + 1 - as }, tipC2: { x: px + b, y: py + 1 },
+      tipApex: { x: px + 0.5, y: py + 1 }, tipC3: { x: px + 1 - b, y: py + 1 },
+      tipC4: { x: px, y: py + 1 - as }, tipEndPt: { x: px, y: py + 1 - s },
+    };
+    case "left": return {
+      tipC1: { x: px + as, y: py + 1 }, tipC2: { x: px, y: py + b },
+      tipApex: { x: px, y: py + 0.5 }, tipC3: { x: px, y: py + 1 - b },
+      tipC4: { x: px + as, y: py }, tipEndPt: { x: px + s, y: py },
+    };
+    case "right": return {
+      tipC1: { x: px + 1 - as, y: py }, tipC2: { x: px + 1, y: py + 1 - b },
+      tipApex: { x: px + 1, y: py + 0.5 }, tipC3: { x: px + 1, y: py + b },
+      tipC4: { x: px + 1 - as, y: py + 1 }, tipEndPt: { x: px + 1 - s, y: py + 1 },
+    };
+  }
+}
+
 export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDiagonals = 0, fullLCorners = false, skipCheckerLCorners = false, connectDiagonalsOrder = "default", tipStyle = "none", tipBase = null) {
   if (squares.size === 0) return { path: "", fillets: "" };
 
@@ -304,7 +341,6 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
 
       // Tip curve detection: for right-turn vertices that own a tip pixel's
       // tip-end corner, replace the outer arc with a tip curve plan.
-      // Currently only handles upward-facing simple (a/b) tips.
       if (v.turn === "right" && tipPixelInfo.size > 0 && plan.mode !== "tipCurve" && plan.mode !== "tipCurveEnd") {
         const tipInEdge = edges[(i - 1 + n) % n];
         const tipInDx = Math.sign(tipInEdge.dx), tipInDy = Math.sign(tipInEdge.dy);
@@ -314,22 +350,20 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
                        : tipCorner === "br" ? key(v.x - 1, v.y - 1)
                        : key(v.x, v.y - 1);
         const tipInfo = tipPixelInfo.get(ownerKey);
-        if (tipInfo?.dir === "up" && !tipInfo.profile.lobes) {
-          const [px, py] = unkey(ownerKey);
-          const { s, profile: { a, b } } = tipInfo;
-          if (tipCorner === "tl") {
-            plan = {
-              mode: "tipCurve", radius: s,
-              tipPx: px, tipPy: py, tipS: s, tipA: a, tipB: b,
-              tipEndPt: { x: px + 1, y: py + s },
-            };
-            tipCurveVertices.add(key(v.x, v.y));
-          } else if (tipCorner === "tr") {
-            plan = {
-              mode: "tipCurveEnd", radius: 0,
-              tipEndPt: { x: px + 1, y: py + s },
-            };
-            tipCurveVertices.add(key(v.x, v.y));
+        if (tipInfo && !tipInfo.profile.lobes) {
+          const roles = TIP_CURVE_ROLES[tipInfo.dir];
+          if (roles) {
+            const [px, py] = unkey(ownerKey);
+            const { s, profile: { a, b } } = tipInfo;
+            if (tipCorner === roles.tipCurve) {
+              const pts = tipCurveControlPoints(px, py, tipInfo.dir, s, a, b);
+              plan = { mode: "tipCurve", radius: s, ...pts };
+              tipCurveVertices.add(key(v.x, v.y));
+            } else if (tipCorner === roles.tipCurveEnd) {
+              const pts = tipCurveControlPoints(px, py, tipInfo.dir, s, a, b);
+              plan = { mode: "tipCurveEnd", radius: 0, tipEndPt: pts.tipEndPt };
+              tipCurveVertices.add(key(v.x, v.y));
+            }
           }
         }
       }
@@ -407,10 +441,10 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
       let departurePt = null;
 
       if (plans[i].mode === "tipCurve") {
-        // Tip curve: emit two cubics from left-base through apex to right-base
-        const { tipPx: px, tipPy: py, tipS: s, tipA: a, tipB: b, tipEndPt } = plans[i];
-        p.push(`C${fmt(px)},${fmt(py + a * s)},${fmt(px + 1 - b)},${fmt(py)},${fmt(px + 0.5)},${fmt(py)}`);
-        p.push(`C${fmt(px + b)},${fmt(py)},${fmt(px + 1)},${fmt(py + a * s)},${fmt(tipEndPt.x)},${fmt(tipEndPt.y)}`);
+        // Tip curve: emit two cubics from start-base through apex to end-base
+        const { tipC1, tipC2, tipApex, tipC3, tipC4, tipEndPt } = plans[i];
+        p.push(`C${fmt(tipC1.x)},${fmt(tipC1.y)},${fmt(tipC2.x)},${fmt(tipC2.y)},${fmt(tipApex.x)},${fmt(tipApex.y)}`);
+        p.push(`C${fmt(tipC3.x)},${fmt(tipC3.y)},${fmt(tipC4.x)},${fmt(tipC4.y)},${fmt(tipEndPt.x)},${fmt(tipEndPt.y)}`);
         departurePt = tipEndPt;
       } else if (plans[i].mode === "tipCurveEnd") {
         // Tip curve already landed here — just record pen position for next edge
