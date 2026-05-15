@@ -9,8 +9,9 @@
 
 import { key, unkey, snap, fmt } from './pixel-paths.mjs';
 import { classifyPixels, computeVertexMap } from './pixel-classify.mjs';
+import { TIP_PROFILES, resolveStyle } from './per-pixel-paths.mjs';
 
-export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDiagonals = 0, fullLCorners = false, skipCheckerLCorners = false, connectDiagonalsOrder = "default") {
+export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDiagonals = 0, fullLCorners = false, skipCheckerLCorners = false, connectDiagonalsOrder = "default", tipStyle = "none", tipBase = null) {
   if (squares.size === 0) return { path: "", fillets: "" };
 
   // --- Pixel classification (authoritative source of truth) ---
@@ -20,6 +21,23 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
 
   // --- Vertex map (pre-computed geometry for every grid vertex) ---
   const vertexMap = computeVertexMap(pixelMap, allPixels, { ro: rOuter, ri: rInner });
+
+  // --- Tip pixel info (derived from pixel map) ---
+  const tipPixelInfo = new Map();
+  if (tipStyle !== "none") {
+    for (const [pk, info] of pixelMap) {
+      if (!info.tip) continue;
+      const resolvedTip = resolveStyle(tipStyle, TIP_PROFILES, info.x, info.y, 100);
+      if (resolvedTip === "none") continue;
+      const profile = TIP_PROFILES[resolvedTip];
+      if (!profile) continue;
+      const base = tipBase ?? profile.base ?? 0;
+      tipPixelInfo.set(pk, { dir: info.tip, profile, base, s: 1 - base, name: resolvedTip });
+    }
+  }
+
+  // Vertices that are part of a tip curve (suppress checkerboard notches there)
+  const tipCurveVertices = new Set();
 
   // --- Diagonal connections (derived from pixel map) ---
   const diagConnections = new Map(); // vertexKey → "br" | "bl"
@@ -284,6 +302,38 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
         }
       }
 
+      // Tip curve detection: for right-turn vertices that own a tip pixel's
+      // tip-end corner, replace the outer arc with a tip curve plan.
+      // Currently only handles upward-facing simple (a/b) tips.
+      if (v.turn === "right" && tipPixelInfo.size > 0 && plan.mode !== "tipCurve" && plan.mode !== "tipCurveEnd") {
+        const tipInEdge = edges[(i - 1 + n) % n];
+        const tipInDx = Math.sign(tipInEdge.dx), tipInDy = Math.sign(tipInEdge.dy);
+        const tipCorner = tipInDx === 1 ? "tr" : tipInDy === 1 ? "br" : tipInDx === -1 ? "bl" : "tl";
+        const ownerKey = tipCorner === "tl" ? key(v.x, v.y)
+                       : tipCorner === "tr" ? key(v.x - 1, v.y)
+                       : tipCorner === "br" ? key(v.x - 1, v.y - 1)
+                       : key(v.x, v.y - 1);
+        const tipInfo = tipPixelInfo.get(ownerKey);
+        if (tipInfo?.dir === "up" && !tipInfo.profile.lobes) {
+          const [px, py] = unkey(ownerKey);
+          const { s, profile: { a, b } } = tipInfo;
+          if (tipCorner === "tl") {
+            plan = {
+              mode: "tipCurve", radius: s,
+              tipPx: px, tipPy: py, tipS: s, tipA: a, tipB: b,
+              tipEndPt: { x: px + 1, y: py + s },
+            };
+            tipCurveVertices.add(key(v.x, v.y));
+          } else if (tipCorner === "tr") {
+            plan = {
+              mode: "tipCurveEnd", radius: 0,
+              tipEndPt: { x: px + 1, y: py + s },
+            };
+            tipCurveVertices.add(key(v.x, v.y));
+          }
+        }
+      }
+
       // For fullLCornerArc, compute shorten flags (same logic as contour)
       if (plan.mode === "fullLCornerArc") {
         const prevI = (i - 1 + n) % n;
@@ -335,6 +385,9 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
         startX = arrivalPt.px;
         startY = arrivalPt.py;
       }
+    } else if (plans[0].mode === "tipCurveEnd") {
+      startX = plans[0].tipEndPt.x;
+      startY = plans[0].tipEndPt.y;
     }
 
     p.push(`M${fmt(startX)},${fmt(startY)}`);
@@ -353,7 +406,16 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
       // null means pen is at the expected grid position (vertex ± r along edge).
       let departurePt = null;
 
-      if (vertices[i].turn === "right" && r > 0) {
+      if (plans[i].mode === "tipCurve") {
+        // Tip curve: emit two cubics from left-base through apex to right-base
+        const { tipPx: px, tipPy: py, tipS: s, tipA: a, tipB: b, tipEndPt } = plans[i];
+        p.push(`C${fmt(px)},${fmt(py + a * s)},${fmt(px + 1 - b)},${fmt(py)},${fmt(px + 0.5)},${fmt(py)}`);
+        p.push(`C${fmt(px + b)},${fmt(py)},${fmt(px + 1)},${fmt(py + a * s)},${fmt(tipEndPt.x)},${fmt(tipEndPt.y)}`);
+        departurePt = tipEndPt;
+      } else if (plans[i].mode === "tipCurveEnd") {
+        // Tip curve already landed here — just record pen position for next edge
+        departurePt = plans[i].tipEndPt;
+      } else if (vertices[i].turn === "right" && r > 0) {
         if (plans[i].mode === "fullLCornerArc") {
           const lcDir = plans[i].lcDir;
           const { pdx, pdy, odx: lodx, ody: lody } = LC_DIRS[lcDir];
@@ -413,7 +475,11 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
         } else {
           let targetX, targetY;
           let _dbgBranch = "";
-          if (plans[nextI].mode === "lcArcTransition") {
+          if (plans[nextI].mode === "tipCurveEnd") {
+            targetX = plans[nextI].tipEndPt.x;
+            targetY = plans[nextI].tipEndPt.y;
+            _dbgBranch = "tipCurveEnd";
+          } else if (plans[nextI].mode === "lcArcTransition") {
             targetX = nextV.x; targetY = nextV.y;
             _dbgBranch = "lcArcTransition";
           } else if (plans[nextI].mode === "innerFillet") {
@@ -476,6 +542,7 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
       const vk = key(v.x, v.y);
       if (emittedSet.has(vk)) continue;
       if (diagConnections.has(vk)) continue; // bridge handles geometry
+      if (tipCurveVertices.has(vk)) continue; // tip curve covers this vertex
       emittedSet.add(vk);
 
       const vxf = fmt(v.x), vyf = fmt(v.y);

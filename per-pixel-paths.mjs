@@ -332,14 +332,14 @@ export function buildLobedTipPath(p, ps, profile) {
 }
 
 // Deterministic per-vertex hash for jiggle variation and style mixing
-function vtxHash(vx, vy, ch = 0) {
+export function vtxHash(vx, vy, ch = 0) {
   const s = (Math.round(vx * 1e6) * 374761393 + Math.round(vy * 1e6) * 668265263 + ch * 49979693) >>> 0;
   return mulberry32(s)();
 }
 
 // Resolve a style parameter that may be a string or a weighted mix object.
 // Returns a single style name chosen deterministically per pixel.
-function resolveStyle(styleParam, profiles, x, y, hashChannel) {
+export function resolveStyle(styleParam, profiles, x, y, hashChannel) {
   if (typeof styleParam === "string") return styleParam;
   const entries = Object.entries(styleParam).filter(([n, w]) => w > 0 && profiles[n]);
   if (!entries.length) return "none";

@@ -2,11 +2,13 @@
  * Test a specific grid pattern: clean-path vs per-pixel rendered comparison.
  * Generates overlay SVG + pixel diff.
  *
- * Usage: node test/test-clean-pattern.mjs [pattern] [--overlay] [--cd 0,3,5] [--no-flc]
+ * Usage: node test/test-clean-pattern.mjs [pattern] [--overlay] [--cd 0,3,5] [--no-flc] [--ts pointed] [--ri 0]
  *   pattern: grid rows separated by / (e.g. "..X/XX./XXX" or "XXX./X.XX/XX.X/.XXX")
  *   --overlay: also write overlay SVG(s)
  *   --cd: comma-separated cd values to test (default: 0)
  *   --no-flc: disable fullLCorners (enabled by default)
+ *   --ts: tip style (default: "none")
+ *   --ri: inner radius (default: 0.45)
  */
 import { execSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
@@ -22,9 +24,16 @@ const cdValues = cdIdx !== -1 && rawArgs[cdIdx + 1]
   ? rawArgs[cdIdx + 1].split(",").map(Number)
   : [0];
 
-// Pattern is first positional arg (not a flag and not the value after --cd)
+const tsIdx = rawArgs.indexOf("--ts");
+const tipStyle = tsIdx !== -1 && rawArgs[tsIdx + 1] ? rawArgs[tsIdx + 1] : "none";
+const riIdx = rawArgs.indexOf("--ri");
+const riOverride = riIdx !== -1 && rawArgs[riIdx + 1] ? Number(rawArgs[riIdx + 1]) : null;
+
+// Pattern is first positional arg (not a flag and not the value after --cd/--ts/--ri)
 const flagValues = new Set();
 if (cdIdx !== -1) { flagValues.add(cdIdx); flagValues.add(cdIdx + 1); }
+if (tsIdx !== -1) { flagValues.add(tsIdx); flagValues.add(tsIdx + 1); }
+if (riIdx !== -1) { flagValues.add(riIdx); flagValues.add(riIdx + 1); }
 rawArgs.forEach((a, i) => { if (a === '--overlay' || a === '--no-flc') flagValues.add(i); });
 const patternArg = rawArgs.find((a, i) => !flagValues.has(i) && !a.startsWith('--'))
   || "XXX./X.XX/XX.X/.XXX";
@@ -45,7 +54,7 @@ for (let r = 0; r < H; r++)
 
 const w = W + 1, h = H + 1;
 const pxW = w * 80, pxH = h * 80;
-const ro = 0.5, ri = 0.45, flc = !noFlc, scl = false;
+const ro = 0.5, ri = riOverride ?? 0.45, flc = !noFlc, scl = false;
 
 function makeSvg(result) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w + 0.2}">
@@ -58,8 +67,8 @@ function makeSvg(result) {
 for (const cd of cdValues) {
   const sfx = (cdValues.length > 1 || cd !== 0) ? `-cd${cd}` : '';
 
-  const cp = squaresToCleanPath(allPixels, allPixels, ro, ri, cd, flc, scl);
-  const pp = squaresToRoundedPath(pixels, allPixels, ro, ri, cd, false, 0, flc, scl);
+  const cp = squaresToCleanPath(allPixels, allPixels, ro, ri, cd, flc, scl, "default", tipStyle);
+  const pp = squaresToRoundedPath(pixels, allPixels, ro, ri, cd, false, 0, flc, scl, "default", tipStyle);
 
   const cpSvg = makeSvg(cp);
   const ppSvg = makeSvg(pp);

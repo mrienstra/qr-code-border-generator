@@ -364,7 +364,7 @@ export function generate(svgText, {
       for (const [, squares] of group)
         for (const k of squares) allPixels.add(k);
     if (useCleanPath) {
-      toPath = (sq) => squaresToCleanPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, fullLCorners, skipCheckerLCorners, connectDiagonalsOrder);
+      toPath = (sq) => squaresToCleanPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, fullLCorners, skipCheckerLCorners, connectDiagonalsOrder, tipStyle, tipBase);
     } else if (useContour) {
       toPath = (sq) => squaresToContourPath(sq, allPixels, roundedPixels, roundedInner, connectDiagonals, fullLCorners, skipCheckerLCorners);
     } else if (roundedPixels > 0 || roundedInner > 0) {
@@ -680,7 +680,7 @@ export function generate(svgText, {
     });
     let barResult;
     if (useCleanPath) {
-      barResult = squaresToCleanPath(barSq, proxyAllPixels, roundedPixels, roundedInner, connectDiagonals, fullLCorners, skipCheckerLCorners, connectDiagonalsOrder);
+      barResult = squaresToCleanPath(barSq, proxyAllPixels, roundedPixels, roundedInner, connectDiagonals, fullLCorners, skipCheckerLCorners, connectDiagonalsOrder, tipStyle, tipBase);
     } else if (useContour) {
       barResult = squaresToContourPath(barSq, proxyAllPixels, roundedPixels, roundedInner, connectDiagonals, fullLCorners, skipCheckerLCorners);
     } else if (roundedPixels > 0 || roundedInner > 0) {
