@@ -86,26 +86,37 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
 
   // --- Tip-aware inner fillet overrides ---
   // When ri > 0 and a concave vertex is adjacent to a tip pixel, the standard
-  // grid-aligned fillet endpoint may land inside the tip curve. Override eA
+  // grid-aligned fillet endpoint may land inside the tip curve. Override eA/eB
   // in the vertex map with the actual tip-curve intersection point.
-  // Handles up and down tips (eA overrides). Left/right tips use eB (TODO).
   //
   // Per direction: which vertex gets which side override, and how to transform.
   // findTipEdge always works in normalized up-tip space; we transform results.
   const TIP_EA_OVERRIDES = {
     up: {
-      // left side → vertex at base-left, right side → vertex at base-right
       left:  { vx: 0, vy: 1, absent: "nw" },
       right: { vx: 1, vy: 1, absent: "ne" },
       toGrid: (px, py, u, v) => ({ x: px + u, y: py + v }),
       tangent: (tx, ty) => ({ tx, ty }),
     },
     down: {
-      // In normalized space "left" (u<0.5) maps to grid-right (px+1), "right" (u>0.5) maps to grid-left (px)
       left:  { vx: 1, vy: 0, absent: "se" },
       right: { vx: 0, vy: 0, absent: "sw" },
       toGrid: (px, py, u, v) => ({ x: px + 1 - u, y: py + 1 - v }),
       tangent: (tx, ty) => ({ tx: -tx, ty: -ty }),
+    },
+  };
+  const TIP_EB_OVERRIDES = {
+    right: {
+      left:  { vx: 0, vy: 0, absent: "ne" },
+      right: { vx: 0, vy: 1, absent: "se" },
+      toGrid: (px, py, u, v) => ({ x: px + 1 - v, y: py + u }),
+      tangent: (tx, ty) => ({ tx: -ty, ty: tx }),
+    },
+    left: {
+      right: { vx: 1, vy: 0, absent: "nw" },
+      left:  { vx: 1, vy: 1, absent: "sw" },
+      toGrid: (px, py, u, v) => ({ x: px + v, y: py + 1 - u }),
+      tangent: (tx, ty) => ({ tx: ty, ty: -tx }),
     },
   };
 
@@ -146,6 +157,40 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
         const cubic = cubics[side];
         const split = splitCubicAtT(cubic[0], cubic[1], cubic[2], cubic[3], edge.t);
         entry.concave.eATipConnector = split.right.map(p => toGrid(px, py, p.x, p.y));
+      }
+    }
+
+    // eB overrides for left/right tips (horizontal fillet arm intersects tip curve)
+    for (const [pk, tipInfo] of tipPixelInfo) {
+      if (tipInfo.profile.lobes) continue;
+      const overrideSpec = TIP_EB_OVERRIDES[tipInfo.dir];
+      if (!overrideSpec) continue; // up/down tips use eA, not eB
+
+      const [px, py] = unkey(pk);
+      const params = { ...tipInfo.profile, base: tipInfo.base };
+      const { a, b } = tipInfo.profile;
+      const s = tipInfo.s;
+      const cubics = makeCubics(a, b, s);
+      const { toGrid, tangent } = overrideSpec;
+
+      for (const side of ["left", "right"]) {
+        const edge = findTipEdge(1 - rInner, params, side);
+        if (!edge) continue;
+        const spec = overrideSpec[side];
+        const vk = key(px + spec.vx, py + spec.vy);
+        const entry = vertexMap.get(vk);
+        if (entry?.concave?.absent !== spec.absent) continue;
+
+        const gridPt = toGrid(px, py, edge.px, edge.py);
+        const gridTan = tangent(edge.tx, edge.ty);
+        const eB = { px: gridPt.x, py: gridPt.y, tx: gridTan.tx, ty: gridTan.ty };
+        entry.concave.eB = eB;
+        entry.concave.cp = filletControlPoint(entry.concave.eA, eB);
+
+        // De Casteljau: split cubic at intersection, keep right segment (fillet pt → base)
+        const cubic = cubics[side];
+        const split = splitCubicAtT(cubic[0], cubic[1], cubic[2], cubic[3], edge.t);
+        entry.concave.eBTipConnector = split.right.map(p => toGrid(px, py, p.x, p.y));
       }
     }
   }
@@ -558,7 +603,7 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
           const endPt = (ody !== 0) ? eA : eB;
           p.push(`Q${fmt(cp.x)},${fmt(cp.y)},${fmt(endPt.px)},${fmt(endPt.py)}`);
           const departureOnArc = (ody !== 0) ? aOnArc : bOnArc;
-          const hasTipConnector = (ody !== 0) && vInfo.concave.eATipConnector;
+          const hasTipConnector = (ody !== 0) ? vInfo.concave.eATipConnector : vInfo.concave.eBTipConnector;
           if (departureOnArc || hasTipConnector) departurePt = { x: endPt.px, y: endPt.py };
           if (_dbg) console.log(`  [ser] i=${i} v=(${vertices[i].x},${vertices[i].y}) VERTEX: innerFillet → Q to (${fmt(endPt.px)},${fmt(endPt.py)}) pick=${ody!==0?'eA':'eB'} departurePt=${departureOnArc?'SET':'null'}`);
         } else {
@@ -588,9 +633,11 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
         // the edge follows the curve (fillet→tipBase or tipBase→fillet), emit a
         // De Casteljau-split cubic instead of a straight line.
         } else if (plans[nextI].mode === "tipCurve") {
-          // Case A: fillet eA → tipCurve base (current vertex is concave with connector)
+          // Case A: fillet → tipCurve base (current vertex is concave with connector)
           const curVInfo = vertexMap.get(key(vertices[i].x, vertices[i].y));
-          const connector = curVInfo?.concave?.eATipConnector;
+          const connector = (ody !== 0)
+            ? curVInfo?.concave?.eATipConnector
+            : curVInfo?.concave?.eBTipConnector;
           if (connector) {
             p.push(`C${fmt(connector[1].x)},${fmt(connector[1].y)},${fmt(connector[2].x)},${fmt(connector[2].y)},${fmt(connector[3].x)},${fmt(connector[3].y)}`);
           } else {
@@ -601,15 +648,21 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
             p.push(`L${fmt(targetX)},${fmt(targetY)}`);
           }
         } else if (plans[i].mode === "tipCurveEnd" && vertices[nextI].turn === "left") {
-          // Case B: tipCurveEnd base → fillet eA (next vertex is concave with connector)
+          // Case B: tipCurveEnd base → fillet (next vertex is concave with connector)
           // Only valid when the connector's base (connector[3]) matches our departurePt,
           // meaning this tipCurveEnd and the fillet belong to the same tip pixel.
           const nextVInfo = vertexMap.get(key(vertices[nextI].x, vertices[nextI].y));
-          const connector = nextVInfo?.concave?.eATipConnector;
-          const connectorMatchesDeparture = connector &&
-            Math.abs(connector[3].x - departurePt.x) < 0.001 &&
-            Math.abs(connector[3].y - departurePt.y) < 0.001;
-          if (connectorMatchesDeparture) {
+          // Check both eA and eB connectors — pick the one whose base matches departurePt
+          const eAConn = nextVInfo?.concave?.eATipConnector;
+          const eBConn = nextVInfo?.concave?.eBTipConnector;
+          const matchesA = eAConn &&
+            Math.abs(eAConn[3].x - departurePt.x) < 0.001 &&
+            Math.abs(eAConn[3].y - departurePt.y) < 0.001;
+          const matchesB = eBConn &&
+            Math.abs(eBConn[3].x - departurePt.x) < 0.001 &&
+            Math.abs(eBConn[3].y - departurePt.y) < 0.001;
+          const connector = matchesA ? eAConn : matchesB ? eBConn : null;
+          if (connector) {
             // Reverse the connector: base→fillet is [P3,P2,P1,P0] of the forward connector
             p.push(`C${fmt(connector[2].x)},${fmt(connector[2].y)},${fmt(connector[1].x)},${fmt(connector[1].y)},${fmt(connector[0].x)},${fmt(connector[0].y)}`);
           } else {
