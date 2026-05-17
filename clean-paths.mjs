@@ -86,58 +86,66 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
 
   // --- Tip-aware inner fillet overrides ---
   // When ri > 0 and a concave vertex is adjacent to a tip pixel, the standard
-  // grid-aligned fillet endpoint may land inside the tip curve. Override eA/eB
+  // grid-aligned fillet endpoint may land inside the tip curve. Override eA
   // in the vertex map with the actual tip-curve intersection point.
-  // Currently handles up-tips only.
+  // Handles up and down tips (eA overrides). Left/right tips use eB (TODO).
+  //
+  // Per direction: which vertex gets which side override, and how to transform.
+  // findTipEdge always works in normalized up-tip space; we transform results.
+  const TIP_EA_OVERRIDES = {
+    up: {
+      // left side → vertex at base-left, right side → vertex at base-right
+      left:  { vx: 0, vy: 1, absent: "nw" },
+      right: { vx: 1, vy: 1, absent: "ne" },
+      toGrid: (px, py, u, v) => ({ x: px + u, y: py + v }),
+      tangent: (tx, ty) => ({ tx, ty }),
+    },
+    down: {
+      // In normalized space "left" (u<0.5) maps to grid-right (px+1), "right" (u>0.5) maps to grid-left (px)
+      left:  { vx: 1, vy: 0, absent: "se" },
+      right: { vx: 0, vy: 0, absent: "sw" },
+      toGrid: (px, py, u, v) => ({ x: px + 1 - u, y: py + 1 - v }),
+      tangent: (tx, ty) => ({ tx: -tx, ty: -ty }),
+    },
+  };
+
   if (rInner > 0 && tipPixelInfo.size > 0) {
+    // Normalized cubics (apex → base) — same for all directions in normalized space
+    const makeCubics = (a, b, s) => ({
+      left:  [{ x: 0.5, y: 0 }, { x: 1 - b, y: 0 }, { x: 0, y: a * s }, { x: 0, y: s }],
+      right: [{ x: 0.5, y: 0 }, { x: b, y: 0 }, { x: 1, y: a * s }, { x: 1, y: s }],
+    });
+
     for (const [pk, tipInfo] of tipPixelInfo) {
-      if (tipInfo.dir !== "up" || tipInfo.profile.lobes) continue;
+      if (tipInfo.profile.lobes) continue;
+      const overrideSpec = TIP_EA_OVERRIDES[tipInfo.dir];
+      if (!overrideSpec) continue; // left/right tips: eB override (not yet implemented)
+
       const [px, py] = unkey(pk);
       const params = { ...tipInfo.profile, base: tipInfo.base };
-
-      // An up-tip at (px, py) affects concave vertices at the base:
-      //   vertex (px, py+1): tip pixel is NE → eA goes up into tip (absent=nw, eA override)
-      //   vertex (px+1, py+1): tip pixel is NW → eA goes up into tip (absent=ne, eA override)
-      const edgeLeft = findTipEdge(1 - rInner, params, "left");
-      const edgeRight = findTipEdge(1 - rInner, params, "right");
-
-      // Left half cubic in normalized tip-up coords: apex → left base
       const { a, b } = tipInfo.profile;
       const s = tipInfo.s;
-      const leftCubicNorm = [
-        { x: 0.5, y: 0 }, { x: 1 - b, y: 0 }, { x: 0, y: a * s }, { x: 0, y: s }
-      ];
-      const rightCubicNorm = [
-        { x: 0.5, y: 0 }, { x: b, y: 0 }, { x: 1, y: a * s }, { x: 1, y: s }
-      ];
-      // Transform normalized point to grid coords (up-tip: identity + offset)
-      const toGrid = (p) => ({ x: px + p.x, y: py + p.y });
+      const cubics = makeCubics(a, b, s);
+      const { toGrid, tangent } = overrideSpec;
 
-      if (edgeLeft) {
-        // Vertex (px, py+1), absent="nw": eA goes upward along left side of tip
-        const vk = key(px, py + 1);
+      for (const side of ["left", "right"]) {
+        const edge = findTipEdge(1 - rInner, params, side);
+        if (!edge) continue;
+        const spec = overrideSpec[side];
+        const vk = key(px + spec.vx, py + spec.vy);
         const entry = vertexMap.get(vk);
-        if (entry?.concave?.absent === "nw") {
-          const eA = { px: px + edgeLeft.px, py: py + edgeLeft.py, tx: edgeLeft.tx, ty: edgeLeft.ty };
-          entry.concave.eA = eA;
-          entry.concave.cp = filletControlPoint(eA, entry.concave.eB);
-          // De Casteljau: right segment of left cubic (fillet point → base)
-          const split = splitCubicAtT(leftCubicNorm[0], leftCubicNorm[1], leftCubicNorm[2], leftCubicNorm[3], edgeLeft.t);
-          entry.concave.eATipConnector = split.right.map(toGrid);
-        }
-      }
-      if (edgeRight) {
-        // Vertex (px+1, py+1), absent="ne": eA goes upward along right side of tip
-        const vk = key(px + 1, py + 1);
-        const entry = vertexMap.get(vk);
-        if (entry?.concave?.absent === "ne") {
-          const eA = { px: px + edgeRight.px, py: py + edgeRight.py, tx: edgeRight.tx, ty: edgeRight.ty };
-          entry.concave.eA = eA;
-          entry.concave.cp = filletControlPoint(eA, entry.concave.eB);
-          // De Casteljau: right segment of right cubic (fillet point → base)
-          const split = splitCubicAtT(rightCubicNorm[0], rightCubicNorm[1], rightCubicNorm[2], rightCubicNorm[3], edgeRight.t);
-          entry.concave.eATipConnector = split.right.map(toGrid);
-        }
+        if (entry?.concave?.absent !== spec.absent) continue;
+
+        const gridPt = toGrid(px, py, edge.px, edge.py);
+        const gridTan = tangent(edge.tx, edge.ty);
+        const eA = { px: gridPt.x, py: gridPt.y, tx: gridTan.tx, ty: gridTan.ty };
+        entry.concave.eA = eA;
+        entry.concave.cp = filletControlPoint(eA, entry.concave.eB);
+
+        // De Casteljau: split cubic at intersection, keep right segment (fillet pt → base)
+        const cubic = cubics[side];
+        const split = splitCubicAtT(cubic[0], cubic[1], cubic[2], cubic[3], edge.t);
+        entry.concave.eATipConnector = split.right.map(p => toGrid(px, py, p.x, p.y));
       }
     }
   }
@@ -594,9 +602,14 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
           }
         } else if (plans[i].mode === "tipCurveEnd" && vertices[nextI].turn === "left") {
           // Case B: tipCurveEnd base → fillet eA (next vertex is concave with connector)
+          // Only valid when the connector's base (connector[3]) matches our departurePt,
+          // meaning this tipCurveEnd and the fillet belong to the same tip pixel.
           const nextVInfo = vertexMap.get(key(vertices[nextI].x, vertices[nextI].y));
           const connector = nextVInfo?.concave?.eATipConnector;
-          if (connector) {
+          const connectorMatchesDeparture = connector &&
+            Math.abs(connector[3].x - departurePt.x) < 0.001 &&
+            Math.abs(connector[3].y - departurePt.y) < 0.001;
+          if (connectorMatchesDeparture) {
             // Reverse the connector: base→fillet is [P3,P2,P1,P0] of the forward connector
             p.push(`C${fmt(connector[2].x)},${fmt(connector[2].y)},${fmt(connector[1].x)},${fmt(connector[1].y)},${fmt(connector[0].x)},${fmt(connector[0].y)}`);
           } else {
