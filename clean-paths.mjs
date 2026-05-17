@@ -33,30 +33,120 @@ function splitCubicAtT(P0, P1, P2, P3, t) {
 
 // Compute the 6 control/endpoint values for the two tip cubics in grid space.
 // Uses the per-pixel mapTipPt transformation applied to normalized tip-up coords.
-function tipCurveControlPoints(px, py, dir, s, a, b) {
-  const as = a * s;
-  switch (dir) {
-    case "up": return {
-      tipC1: { x: px, y: py + as }, tipC2: { x: px + 1 - b, y: py },
-      tipApex: { x: px + 0.5, y: py }, tipC3: { x: px + b, y: py },
-      tipC4: { x: px + 1, y: py + as }, tipEndPt: { x: px + 1, y: py + s },
-    };
-    case "down": return {
-      tipC1: { x: px + 1, y: py + 1 - as }, tipC2: { x: px + b, y: py + 1 },
-      tipApex: { x: px + 0.5, y: py + 1 }, tipC3: { x: px + 1 - b, y: py + 1 },
-      tipC4: { x: px, y: py + 1 - as }, tipEndPt: { x: px, y: py + 1 - s },
-    };
-    case "left": return {
-      tipC1: { x: px + as, y: py + 1 }, tipC2: { x: px, y: py + b },
-      tipApex: { x: px, y: py + 0.5 }, tipC3: { x: px, y: py + 1 - b },
-      tipC4: { x: px + as, y: py }, tipEndPt: { x: px + s, y: py },
-    };
-    case "right": return {
-      tipC1: { x: px + 1 - as, y: py }, tipC2: { x: px + 1, y: py + 1 - b },
-      tipApex: { x: px + 1, y: py + 0.5 }, tipC3: { x: px + 1, y: py + b },
-      tipC4: { x: px + 1 - as, y: py + 1 }, tipEndPt: { x: px + 1 - s, y: py + 1 },
+// Compute tip curve Bézier segments in grid coordinates.
+// Returns { segments: [{c1, c2, end}, ...], tipEndPt, radius: s }
+// For simple (a/b) profiles: 2 segments (shoulder→apex→shoulder).
+// For lobed profiles: N segments (shoulder→peak1→valley1→...→center→...→shoulder).
+function tipCurveSegments(px, py, dir, s, profile) {
+  // mapTipPt: transforms normalized (u, v) → grid (x, y)
+  const toGrid = (u, v) => {
+    switch (dir) {
+      case "up":    return { x: px + u,     y: py + v * s };
+      case "down":  return { x: px + 1 - u, y: py + 1 - v * s };
+      case "left":  return { x: px + v * s, y: py + 1 - u };
+      case "right": return { x: px + 1 - v * s, y: py + u };
+    }
+  };
+
+  if (!profile.lobes) {
+    // Simple profile: 2 cubics, CW order (left-base u=0 → apex → right-base u=1)
+    const { a, b } = profile;
+    return {
+      segments: [
+        { c1: toGrid(0, a), c2: toGrid(1 - b, 0), end: toGrid(0.5, 0) },
+        { c1: toGrid(b, 0), c2: toGrid(1, a), end: toGrid(1, 1) },
+      ],
+      tipEndPt: toGrid(1, 1),
+      radius: s,
     };
   }
+
+  // Lobed profile: build node chain like buildLobedTipPath (rShoulder→lShoulder)
+  // then reverse the cubic chain for CW traversal order (lShoulder→rShoulder, u=0→1).
+  const { shoulder, centerY, centerPull = 0, centerOpen = 0, centerRotate = 0, lobes } = profile;
+  const outerPeaks = Math.floor(lobes / 2);
+  const preCenterValleys = Math.floor((lobes - 1) / 2);
+
+  function handlePair(node) {
+    const pull = node.pull ?? 0;
+    if (!pull) return { in: [node.x, node.y], out: [node.x, node.y] };
+    const open = Math.max(-1, Math.min(1, node.open ?? 0));
+    const rotate = Math.max(-1, Math.min(1, node.rotate ?? 0));
+    const t = Math.abs(open), axS = open < 0 ? -1 : 1;
+    const ang = -Math.PI / 2 + rotate * (Math.PI / 2);
+    const ax = Math.cos(ang), ay = Math.sin(ang), lx = -ay, ly = ax;
+    const norm = (x, y) => { const m = Math.hypot(x, y) || 1; return [x / m, y / m]; };
+    const [ix, iy] = norm(lx * (1 - t) + ax * axS * t, ly * (1 - t) + ay * axS * t);
+    const [ox, oy] = norm(-lx * (1 - t) + ax * axS * t, -ly * (1 - t) + ay * axS * t);
+    return {
+      in:  [node.x + ix * pull, node.y + iy * pull],
+      out: [node.x + ox * pull, node.y + oy * pull],
+    };
+  }
+
+  const rightNodes = [];
+  for (let i = 1; i <= outerPeaks; i++) {
+    rightNodes.push({
+      x: profile[`peak${i}X`], y: profile[`peak${i}Y`],
+      pull: profile[`peak${i}Pull`] ?? 0,
+      open: profile[`peak${i}Open`] ?? 0,
+      rotate: profile[`peak${i}Rotate`] ?? 0,
+    });
+    if (i <= preCenterValleys) {
+      rightNodes.push({
+        x: profile[`valley${i}X`], y: profile[`valley${i}Y`],
+        pull: profile[`valley${i}Pull`] ?? 0,
+        open: profile[`valley${i}Open`] ?? 0,
+        rotate: profile[`valley${i}Rotate`] ?? 0,
+      });
+    }
+  }
+
+  const centerNode = { x: 0.5, y: centerY, pull: centerPull, open: centerOpen, rotate: centerRotate };
+  const leftNodes = rightNodes.slice().reverse().map(n => ({
+    x: 1 - n.x, y: n.y, pull: n.pull, open: n.open, rotate: -n.rotate,
+  }));
+
+  // Build in buildLobedTipPath order: rShoulder → rightNodes → center → leftNodes → lShoulder
+  const nodes = [...rightNodes, centerNode, ...leftNodes].map(n => ({ ...n, ...handlePair(n) }));
+
+  const rShoulder = [1, 1 - shoulder];
+  const lShoulder = [0, 1 - shoulder];
+
+  // Build forward segments (u=1→0, rShoulder→lShoulder)
+  const fwdSegs = [];
+  if (nodes.length) {
+    fwdSegs.push({
+      c1: toGrid(rShoulder[0], rShoulder[1]),
+      c2: toGrid(nodes[0].in[0], nodes[0].in[1]),
+      end: toGrid(nodes[0].x, nodes[0].y),
+    });
+    for (let i = 0; i < nodes.length - 1; i++) {
+      fwdSegs.push({
+        c1: toGrid(nodes[i].out[0], nodes[i].out[1]),
+        c2: toGrid(nodes[i + 1].in[0], nodes[i + 1].in[1]),
+        end: toGrid(nodes[i + 1].x, nodes[i + 1].y),
+      });
+    }
+    fwdSegs.push({
+      c1: toGrid(nodes[nodes.length - 1].out[0], nodes[nodes.length - 1].out[1]),
+      c2: toGrid(lShoulder[0], lShoulder[1]),
+      end: toGrid(0, 1),
+    });
+  }
+
+  // Reverse the cubic chain for CW traversal (u=0→1).
+  // Reversing cubic A→B with controls (c1,c2) gives B→A with controls (c2,c1).
+  // The end of segment[i] is the start of segment[i+1] in forward order.
+  const segments = [];
+  for (let i = fwdSegs.length - 1; i >= 0; i--) {
+    const seg = fwdSegs[i];
+    // The start of this forward segment is the end of the previous one (or rShoulder for first)
+    const prevEnd = i > 0 ? fwdSegs[i - 1].end : toGrid(1, 1);
+    segments.push({ c1: seg.c2, c2: seg.c1, end: prevEnd });
+  }
+
+  return { segments, tipEndPt: toGrid(1, 1), radius: s };
 }
 
 export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDiagonals = 0, fullLCorners = false, skipCheckerLCorners = false, connectDiagonalsOrder = "default", tipStyle = "none", tipBase = null) {
@@ -121,22 +211,13 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
   };
 
   if (rInner > 0 && tipPixelInfo.size > 0) {
-    // Normalized cubics (apex → base) — same for all directions in normalized space
-    const makeCubics = (a, b, s) => ({
-      left:  [{ x: 0.5, y: 0 }, { x: 1 - b, y: 0 }, { x: 0, y: a * s }, { x: 0, y: s }],
-      right: [{ x: 0.5, y: 0 }, { x: b, y: 0 }, { x: 1, y: a * s }, { x: 1, y: s }],
-    });
-
     for (const [pk, tipInfo] of tipPixelInfo) {
-      if (tipInfo.profile.lobes) continue;
       const overrideSpec = TIP_EA_OVERRIDES[tipInfo.dir];
-      if (!overrideSpec) continue; // left/right tips: eB override (not yet implemented)
+      if (!overrideSpec) continue; // left/right tips use eB, not eA
 
       const [px, py] = unkey(pk);
       const params = { ...tipInfo.profile, base: tipInfo.base };
-      const { a, b } = tipInfo.profile;
       const s = tipInfo.s;
-      const cubics = makeCubics(a, b, s);
       const { toGrid, tangent } = overrideSpec;
 
       for (const side of ["left", "right"]) {
@@ -154,23 +235,24 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
         entry.concave.cp = filletControlPoint(eA, entry.concave.eB);
 
         // De Casteljau: split cubic at intersection, keep right segment (fillet pt → base)
-        const cubic = cubics[side];
-        const split = splitCubicAtT(cubic[0], cubic[1], cubic[2], cubic[3], edge.t);
+        const seg = edge.seg;
+        const P0 = { x: seg[0][0], y: seg[0][1] };
+        const P1 = { x: seg[1][0], y: seg[1][1] };
+        const P2 = { x: seg[2][0], y: seg[2][1] };
+        const P3 = { x: seg[3][0], y: seg[3][1] };
+        const split = splitCubicAtT(P0, P1, P2, P3, edge.t);
         entry.concave.eATipConnector = split.right.map(p => toGrid(px, py, p.x, p.y));
       }
     }
 
     // eB overrides for left/right tips (horizontal fillet arm intersects tip curve)
     for (const [pk, tipInfo] of tipPixelInfo) {
-      if (tipInfo.profile.lobes) continue;
       const overrideSpec = TIP_EB_OVERRIDES[tipInfo.dir];
       if (!overrideSpec) continue; // up/down tips use eA, not eB
 
       const [px, py] = unkey(pk);
       const params = { ...tipInfo.profile, base: tipInfo.base };
-      const { a, b } = tipInfo.profile;
       const s = tipInfo.s;
-      const cubics = makeCubics(a, b, s);
       const { toGrid, tangent } = overrideSpec;
 
       for (const side of ["left", "right"]) {
@@ -188,8 +270,12 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
         entry.concave.cp = filletControlPoint(entry.concave.eA, eB);
 
         // De Casteljau: split cubic at intersection, keep right segment (fillet pt → base)
-        const cubic = cubics[side];
-        const split = splitCubicAtT(cubic[0], cubic[1], cubic[2], cubic[3], edge.t);
+        const seg = edge.seg;
+        const P0 = { x: seg[0][0], y: seg[0][1] };
+        const P1 = { x: seg[1][0], y: seg[1][1] };
+        const P2 = { x: seg[2][0], y: seg[2][1] };
+        const P3 = { x: seg[3][0], y: seg[3][1] };
+        const split = splitCubicAtT(P0, P1, P2, P3, edge.t);
         entry.concave.eBTipConnector = split.right.map(p => toGrid(px, py, p.x, p.y));
       }
     }
@@ -472,18 +558,18 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
                        : tipCorner === "br" ? key(v.x - 1, v.y - 1)
                        : key(v.x, v.y - 1);
         const tipInfo = tipPixelInfo.get(ownerKey);
-        if (tipInfo && !tipInfo.profile.lobes) {
+        if (tipInfo) {
           const roles = TIP_CURVE_ROLES[tipInfo.dir];
           if (roles) {
             const [px, py] = unkey(ownerKey);
-            const { s, profile: { a, b } } = tipInfo;
+            const { s, profile } = tipInfo;
             if (tipCorner === roles.tipCurve) {
-              const pts = tipCurveControlPoints(px, py, tipInfo.dir, s, a, b);
-              plan = { mode: "tipCurve", radius: s, ...pts };
+              const curve = tipCurveSegments(px, py, tipInfo.dir, s, profile);
+              plan = { mode: "tipCurve", radius: curve.radius, tipSegments: curve.segments, tipEndPt: curve.tipEndPt };
               tipCurveVertices.add(key(v.x, v.y));
             } else if (tipCorner === roles.tipCurveEnd) {
-              const pts = tipCurveControlPoints(px, py, tipInfo.dir, s, a, b);
-              plan = { mode: "tipCurveEnd", radius: 0, tipEndPt: pts.tipEndPt };
+              const curve = tipCurveSegments(px, py, tipInfo.dir, s, profile);
+              plan = { mode: "tipCurveEnd", radius: 0, tipEndPt: curve.tipEndPt };
               tipCurveVertices.add(key(v.x, v.y));
             }
           }
@@ -563,10 +649,11 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
       let departurePt = null;
 
       if (plans[i].mode === "tipCurve") {
-        // Tip curve: emit two cubics from start-base through apex to end-base
-        const { tipC1, tipC2, tipApex, tipC3, tipC4, tipEndPt } = plans[i];
-        p.push(`C${fmt(tipC1.x)},${fmt(tipC1.y)},${fmt(tipC2.x)},${fmt(tipC2.y)},${fmt(tipApex.x)},${fmt(tipApex.y)}`);
-        p.push(`C${fmt(tipC3.x)},${fmt(tipC3.y)},${fmt(tipC4.x)},${fmt(tipC4.y)},${fmt(tipEndPt.x)},${fmt(tipEndPt.y)}`);
+        // Tip curve: emit all cubic segments from start-base through to end-base
+        const { tipSegments, tipEndPt } = plans[i];
+        for (const seg of tipSegments) {
+          p.push(`C${fmt(seg.c1.x)},${fmt(seg.c1.y)},${fmt(seg.c2.x)},${fmt(seg.c2.y)},${fmt(seg.end.x)},${fmt(seg.end.y)}`);
+        }
         departurePt = tipEndPt;
       } else if (plans[i].mode === "tipCurveEnd") {
         // Tip curve already landed here — just record pen position for next edge
@@ -649,20 +736,16 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
           }
         } else if (plans[i].mode === "tipCurveEnd" && vertices[nextI].turn === "left") {
           // Case B: tipCurveEnd base → fillet (next vertex is concave with connector)
-          // Only valid when the connector's base (connector[3]) matches our departurePt,
-          // meaning this tipCurveEnd and the fillet belong to the same tip pixel.
+          // Pick the ARRIVAL arm's connector: for a left-turn at nextI, the arrival arm
+          // is eA when the edge is vertical, eB when horizontal.
           const nextVInfo = vertexMap.get(key(vertices[nextI].x, vertices[nextI].y));
-          // Check both eA and eB connectors — pick the one whose base matches departurePt
-          const eAConn = nextVInfo?.concave?.eATipConnector;
-          const eBConn = nextVInfo?.concave?.eBTipConnector;
-          const matchesA = eAConn &&
-            Math.abs(eAConn[3].x - departurePt.x) < 0.001 &&
-            Math.abs(eAConn[3].y - departurePt.y) < 0.001;
-          const matchesB = eBConn &&
-            Math.abs(eBConn[3].x - departurePt.x) < 0.001 &&
-            Math.abs(eBConn[3].y - departurePt.y) < 0.001;
-          const connector = matchesA ? eAConn : matchesB ? eBConn : null;
-          if (connector) {
+          const connector = (ody !== 0)
+            ? nextVInfo?.concave?.eATipConnector
+            : nextVInfo?.concave?.eBTipConnector;
+          const connectorMatches = connector &&
+            Math.abs(connector[3].x - departurePt.x) < 0.001 &&
+            Math.abs(connector[3].y - departurePt.y) < 0.001;
+          if (connectorMatches) {
             // Reverse the connector: base→fillet is [P3,P2,P1,P0] of the forward connector
             p.push(`C${fmt(connector[2].x)},${fmt(connector[2].y)},${fmt(connector[1].x)},${fmt(connector[1].y)},${fmt(connector[0].x)},${fmt(connector[0].y)}`);
           } else {
