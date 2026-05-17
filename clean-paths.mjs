@@ -9,7 +9,8 @@
 
 import { key, unkey, snap, fmt } from './pixel-paths.mjs';
 import { classifyPixels, computeVertexMap } from './pixel-classify.mjs';
-import { TIP_PROFILES, resolveStyle } from './per-pixel-paths.mjs';
+import { TIP_PROFILES, resolveStyle, findTipEdge } from './per-pixel-paths.mjs';
+import { filletControlPoint } from './util/inner-fillet.mjs';
 
 // For each tip direction, which corner of the owner pixel is the tipCurve start
 // (first vertex encountered in CW traversal) and which is the tipCurveEnd.
@@ -19,6 +20,16 @@ const TIP_CURVE_ROLES = {
   left:  { tipCurve: "bl", tipCurveEnd: "tl" },
   right: { tipCurve: "tr", tipCurveEnd: "br" },
 };
+
+// De Casteljau split: given cubic [P0,P1,P2,P3] and parameter t,
+// returns { left: [P0..S], right: [S..P3] } where S is the on-curve point at t.
+function splitCubicAtT(P0, P1, P2, P3, t) {
+  const lerp = (a, b) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+  const Q0 = lerp(P0, P1), Q1 = lerp(P1, P2), Q2 = lerp(P2, P3);
+  const R0 = lerp(Q0, Q1), R1 = lerp(Q1, Q2);
+  const S = lerp(R0, R1);
+  return { left: [P0, Q0, R0, S], right: [S, R1, Q2, P3] };
+}
 
 // Compute the 6 control/endpoint values for the two tip cubics in grid space.
 // Uses the per-pixel mapTipPt transformation applied to normalized tip-up coords.
@@ -70,6 +81,64 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
       if (!profile) continue;
       const base = tipBase ?? profile.base ?? 0;
       tipPixelInfo.set(pk, { dir: info.tip, profile, base, s: 1 - base, name: resolvedTip });
+    }
+  }
+
+  // --- Tip-aware inner fillet overrides ---
+  // When ri > 0 and a concave vertex is adjacent to a tip pixel, the standard
+  // grid-aligned fillet endpoint may land inside the tip curve. Override eA/eB
+  // in the vertex map with the actual tip-curve intersection point.
+  // Currently handles up-tips only.
+  if (rInner > 0 && tipPixelInfo.size > 0) {
+    for (const [pk, tipInfo] of tipPixelInfo) {
+      if (tipInfo.dir !== "up" || tipInfo.profile.lobes) continue;
+      const [px, py] = unkey(pk);
+      const params = { ...tipInfo.profile, base: tipInfo.base };
+
+      // An up-tip at (px, py) affects concave vertices at the base:
+      //   vertex (px, py+1): tip pixel is NE → eA goes up into tip (absent=nw, eA override)
+      //   vertex (px+1, py+1): tip pixel is NW → eA goes up into tip (absent=ne, eA override)
+      const edgeLeft = findTipEdge(1 - rInner, params, "left");
+      const edgeRight = findTipEdge(1 - rInner, params, "right");
+
+      // Left half cubic in normalized tip-up coords: apex → left base
+      const { a, b } = tipInfo.profile;
+      const s = tipInfo.s;
+      const leftCubicNorm = [
+        { x: 0.5, y: 0 }, { x: 1 - b, y: 0 }, { x: 0, y: a * s }, { x: 0, y: s }
+      ];
+      const rightCubicNorm = [
+        { x: 0.5, y: 0 }, { x: b, y: 0 }, { x: 1, y: a * s }, { x: 1, y: s }
+      ];
+      // Transform normalized point to grid coords (up-tip: identity + offset)
+      const toGrid = (p) => ({ x: px + p.x, y: py + p.y });
+
+      if (edgeLeft) {
+        // Vertex (px, py+1), absent="nw": eA goes upward along left side of tip
+        const vk = key(px, py + 1);
+        const entry = vertexMap.get(vk);
+        if (entry?.concave?.absent === "nw") {
+          const eA = { px: px + edgeLeft.px, py: py + edgeLeft.py, tx: edgeLeft.tx, ty: edgeLeft.ty };
+          entry.concave.eA = eA;
+          entry.concave.cp = filletControlPoint(eA, entry.concave.eB);
+          // De Casteljau: right segment of left cubic (fillet point → base)
+          const split = splitCubicAtT(leftCubicNorm[0], leftCubicNorm[1], leftCubicNorm[2], leftCubicNorm[3], edgeLeft.t);
+          entry.concave.eATipConnector = split.right.map(toGrid);
+        }
+      }
+      if (edgeRight) {
+        // Vertex (px+1, py+1), absent="ne": eA goes upward along right side of tip
+        const vk = key(px + 1, py + 1);
+        const entry = vertexMap.get(vk);
+        if (entry?.concave?.absent === "ne") {
+          const eA = { px: px + edgeRight.px, py: py + edgeRight.py, tx: edgeRight.tx, ty: edgeRight.ty };
+          entry.concave.eA = eA;
+          entry.concave.cp = filletControlPoint(eA, entry.concave.eB);
+          // De Casteljau: right segment of right cubic (fillet point → base)
+          const split = splitCubicAtT(rightCubicNorm[0], rightCubicNorm[1], rightCubicNorm[2], rightCubicNorm[3], edgeRight.t);
+          entry.concave.eATipConnector = split.right.map(toGrid);
+        }
+      }
     }
   }
 
@@ -481,7 +550,8 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
           const endPt = (ody !== 0) ? eA : eB;
           p.push(`Q${fmt(cp.x)},${fmt(cp.y)},${fmt(endPt.px)},${fmt(endPt.py)}`);
           const departureOnArc = (ody !== 0) ? aOnArc : bOnArc;
-          if (departureOnArc) departurePt = { x: endPt.px, y: endPt.py };
+          const hasTipConnector = (ody !== 0) && vInfo.concave.eATipConnector;
+          if (departureOnArc || hasTipConnector) departurePt = { x: endPt.px, y: endPt.py };
           if (_dbg) console.log(`  [ser] i=${i} v=(${vertices[i].x},${vertices[i].y}) VERTEX: innerFillet → Q to (${fmt(endPt.px)},${fmt(endPt.py)}) pick=${ody!==0?'eA':'eB'} departurePt=${departureOnArc?'SET':'null'}`);
         } else {
           p.push(`q${fmt(prevDx * r)},${fmt(prevDy * r)},${fmt(prevDx * r + odx * r)},${fmt(prevDy * r + ody * r)}`);
@@ -506,6 +576,40 @@ export function squaresToCleanPath(squares, allPixels, rOuter, rInner, connectDi
         if (plans[nextI].mode === "fullLCornerArc" && plans[nextI].shortenStart) {
           // Arc picks up from current pen — skip edge.
           if (_dbg) console.log(`  [ser] i=${i} EDGE: departurePt=(${fmt(departurePt.x)},${fmt(departurePt.y)}) → skip (next shStart)`);
+        // Tip-curve connecting edge: if the departurePt is on a tip curve and
+        // the edge follows the curve (fillet→tipBase or tipBase→fillet), emit a
+        // De Casteljau-split cubic instead of a straight line.
+        } else if (plans[nextI].mode === "tipCurve") {
+          // Case A: fillet eA → tipCurve base (current vertex is concave with connector)
+          const curVInfo = vertexMap.get(key(vertices[i].x, vertices[i].y));
+          const connector = curVInfo?.concave?.eATipConnector;
+          if (connector) {
+            p.push(`C${fmt(connector[1].x)},${fmt(connector[1].y)},${fmt(connector[2].x)},${fmt(connector[2].y)},${fmt(connector[3].x)},${fmt(connector[3].y)}`);
+          } else {
+            // No connector — standard edge (straight line to tip base)
+            const tgt = plans[nextI];
+            const targetX = vertices[nextI].x - odx * tgt.radius;
+            const targetY = vertices[nextI].y - ody * tgt.radius;
+            p.push(`L${fmt(targetX)},${fmt(targetY)}`);
+          }
+        } else if (plans[i].mode === "tipCurveEnd" && vertices[nextI].turn === "left") {
+          // Case B: tipCurveEnd base → fillet eA (next vertex is concave with connector)
+          const nextVInfo = vertexMap.get(key(vertices[nextI].x, vertices[nextI].y));
+          const connector = nextVInfo?.concave?.eATipConnector;
+          if (connector) {
+            // Reverse the connector: base→fillet is [P3,P2,P1,P0] of the forward connector
+            p.push(`C${fmt(connector[2].x)},${fmt(connector[2].y)},${fmt(connector[1].x)},${fmt(connector[1].y)},${fmt(connector[0].x)},${fmt(connector[0].y)}`);
+          } else {
+            // No connector — standard targeting
+            const nextVInfoStd = vertexMap.get(key(vertices[nextI].x, vertices[nextI].y));
+            if (nextVInfoStd?.concave?.eA) {
+              const arrivalPt = (ody !== 0) ? nextVInfoStd.concave.eA : nextVInfoStd.concave.eB;
+              p.push(`L${fmt(arrivalPt.px)},${fmt(arrivalPt.py)}`);
+            } else {
+              const rNext = plans[nextI].radius;
+              p.push(`L${fmt(vertices[nextI].x - odx * rNext)},${fmt(vertices[nextI].y - ody * rNext)}`);
+            }
+          }
         } else {
           let targetX, targetY;
           let _dbgBranch = "";

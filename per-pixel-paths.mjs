@@ -46,7 +46,7 @@ function tipHandle(node) {
 // Find where horizontal line y=Y intersects a tip's edge cubic Bézier.
 // Works for both simple (a/b) and lobed tips.
 // Returns {px, py, tx, ty} or null if Y is in the straight stem region.
-function findTipEdge(Y, params, side) {
+export function findTipEdge(Y, params, side) {
   const base = params.base || 0;
   const s = 1 - base;
   if (Y >= s) return null;
@@ -93,7 +93,7 @@ function findTipEdge(Y, params, side) {
   const dy = 3 * u * u * (y1 - y0) + 6 * u * t * (y2 - y1) + 3 * t * t * (y3 - y2);
   const len = Math.hypot(dx, dy);
 
-  return { px, py: Y, tx: dx / len, ty: dy / len };
+  return { px, py: Y, tx: dx / len, ty: dy / len, t, seg };
 }
 
 export function squaresToPath(squares) {
